@@ -1,10 +1,9 @@
 import { test, describe } from 'node:test';
 import assert from 'node:assert';
-import { EventStore, EventStoreConcurrencyError, type DomainEvent } from './event-store.js';
+import { EventStoreConcurrencyError, type DomainEvent } from './event-store.js';
 
 describe('EventStore', () => {
   test('should validate event structure', () => {
-    const eventStore = new EventStore();
     const mockEvent: DomainEvent = {
       aggregateId: 'test-id',
       aggregateType: 'test-aggregate',
