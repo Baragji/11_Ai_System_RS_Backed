@@ -1,0 +1,53 @@
+receivers:
+  otlp:
+    protocols:
+      grpc:
+        endpoint: 0.0.0.0:4317
+      http:
+        endpoint: 0.0.0.0:4318
+processors:
+  memory_limiter:
+    check_interval: 1s
+    limit_mib: 2048
+    spike_limit_mib: 512
+  batch:
+    timeout: 5s
+    send_batch_size: 512
+  attributes:
+    actions:
+      - key: deployment.environment
+        action: upsert
+        value: production
+exporters:
+  otlp/jaeger:
+    endpoint: jaeger-collector.tracing.svc.cluster.local:4317
+    tls:
+      insecure: false
+  prometheusremotewrite:
+    endpoint: https://prometheus.telemetry.prod.company.com/api/v1/write
+  logging:
+    loglevel: warn
+  s3:
+    s3uploader:
+      region: us-east-1
+      bucket: telemetry-prod-artifacts
+      file_prefix: collector/
+      sse: aws:kms
+      kms_key_arn: arn:aws:kms:us-east-1:472319730123:key/1b0a57f8-63e7-4e91-8a62-b88d4c4a6d76
+service:
+  telemetry:
+    logs:
+      level: INFO
+  pipelines:
+    traces:
+      receivers: [otlp]
+      processors: [memory_limiter, batch, attributes]
+      exporters: [otlp/jaeger, s3]
+    metrics:
+      receivers: [otlp]
+      processors: [memory_limiter, batch]
+      exporters: [prometheusremotewrite, s3]
+    logs:
+      receivers: [otlp]
+      processors: [memory_limiter, batch]
+      exporters: [s3]

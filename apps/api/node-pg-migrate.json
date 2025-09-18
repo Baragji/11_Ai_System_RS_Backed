@@ -1,0 +1,6 @@
+{
+  "dir": "migrations",
+  "direction": "up",
+  "migrationsTable": "pgmigrations",
+  "schema": "public"
+}

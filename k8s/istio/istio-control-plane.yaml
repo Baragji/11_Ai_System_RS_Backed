@@ -1,0 +1,128 @@
+apiVersion: install.istio.io/v1alpha1
+kind: IstioOperator
+metadata:
+  name: istio-control-plane
+  namespace: istio-system
+spec:
+  profile: default
+  meshConfig:
+    enableAutoMtls: true
+    defaultConfig:
+      tracing:
+        sampling: 100
+        zipkin:
+          address: jaeger-collector.observability.svc.cluster.local:9411
+      proxyMetadata:
+        ISTIO_META_DNS_CAPTURE: "true"
+        ISTIO_META_DNS_AUTO_ALLOCATE: "true"
+    accessLogFile: /dev/stdout
+  components:
+    ingressGateways:
+      - name: istio-ingressgateway
+        enabled: true
+        k8s:
+          serviceAnnotations:
+            service.beta.kubernetes.io/aws-load-balancer-type: nlb-ip
+            service.beta.kubernetes.io/aws-load-balancer-scheme: internal
+          service:
+            ports:
+              - name: status-port
+                port: 15021
+              - name: https
+                port: 443
+                targetPort: 8443
+              - name: http2
+                port: 80
+                targetPort: 8080
+          overlays:
+            - apiVersion: "apps/v1"
+              kind: "Deployment"
+              name: "istio-ingressgateway"
+              patches:
+                - path: spec.template.spec.containers[0].resources
+                  value:
+                    limits:
+                      cpu: "2"
+                      memory: 2Gi
+                    requests:
+                      cpu: 500m
+                      memory: 1Gi
+    pilot:
+      k8s:
+        env:
+          - name: PILOT_TRACE_SAMPLING
+            value: "100"
+        resources:
+          limits:
+            cpu: "2"
+            memory: 4Gi
+          requests:
+            cpu: 1
+            memory: 2Gi
+  values:
+    global:
+      meshID: prod-mesh
+      multiCluster:
+        enabled: false
+      proxy:
+        logLevel: warning
+      trustDomain: prod.company.com
+    pilot:
+      autoscaleEnabled: true
+      traceSampling: 100
+---
+apiVersion: security.istio.io/v1beta1
+kind: PeerAuthentication
+metadata:
+  name: default
+  namespace: istio-system
+spec:
+  mtls:
+    mode: STRICT
+---
+apiVersion: security.istio.io/v1beta1
+kind: PeerAuthentication
+metadata:
+  name: mesh-default
+  namespace: istio-system
+spec:
+  selector:
+    matchLabels:
+      istio: ingressgateway
+  mtls:
+    mode: STRICT
+---
+apiVersion: security.istio.io/v1beta1
+kind: AuthorizationPolicy
+metadata:
+  name: deny-all-ingress
+  namespace: istio-system
+spec:
+  selector:
+    matchLabels:
+      istio: ingressgateway
+  action: DENY
+  rules:
+    - from:
+        - source:
+            notPrincipals: []
+---
+apiVersion: security.istio.io/v1beta1
+kind: AuthorizationPolicy
+metadata:
+  name: allow-grafana
+  namespace: istio-system
+spec:
+  selector:
+    matchLabels:
+      istio: ingressgateway
+  action: ALLOW
+  rules:
+    - to:
+        - operation:
+            hosts: ["grafana.telemetry.prod.company.com"]
+            paths: ["/"]
+      when:
+        - key: request.auth.principal
+          values:
+            - cluster.local/ns/istio-system/sa/istio-ingressgateway-service-account

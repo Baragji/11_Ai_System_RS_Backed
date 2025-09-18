@@ -1,0 +1,27 @@
+route:
+  receiver: sre-oncall
+  group_by: ['alertname']
+  group_wait: 30s
+  group_interval: 5m
+  repeat_interval: 4h
+  routes:
+    - match:
+        severity: critical
+      receiver: sre-pager
+receivers:
+  - name: sre-oncall
+    slack_configs:
+      - api_url: https://hooks.slack.com/services/T00000000/B00000000/XXXXXXXXXXXXXXXXXXXXXXXX
+        channel: '#ai-platform-alerts'
+        text: |
+          :rotating_light: *{{ .CommonLabels.alertname }}* on {{ .CommonLabels.job }}
+          *Severity:* {{ .CommonLabels.severity }}
+          *Summary:* {{ .CommonAnnotations.summary }}
+          *Description:* {{ .CommonAnnotations.description }}
+  - name: sre-pager
+    pagerduty_configs:
+      - routing_key: 4b2e3a8f563e4f5e8d0f0b33f87df222
+        severity: critical
+        description: '{{ template "pagerduty.default.description" . }}'
+        details:
+          runbook: https://runbooks.prod.company.com/platform-api
