@@ -1,619 +1,394 @@
-# Autonomous AI Coding System - Development Roadmap
+# Autonomous AI Coding System – Enterprise-Grade Implementation Plan
 
-## Overview
-This roadmap breaks down the massive spec.md into manageable phases that Copilot Agent can handle incrementally. Each phase builds on the previous and delivers working functionality.
-
-**Total Estimated Timeline:** 12-16 weeks (if executed perfectly)
-**Recommended Approach:** Complete each phase fully before starting the next
-
----
-
-## Phase 1: Foundation Infrastructure (Week 1)
-**Goal:** Basic working backend with database connectivity
-
-### Phase 1.1: Basic API Setup
-**Copilot Task:**
+## Architectural North Star
 ```
-Create a TypeScript Node.js project with:
-- Express.js REST API
-- Basic project structure (src/, tests/, config/)
-- Package.json with all dependencies
-- TypeScript configuration
-- ESLint and Prettier setup
-- One /health endpoint that returns { status: "ok", timestamp: ISO_date }
+┌────────────┐    ┌────────────┐    ┌───────────────┐
+│  Frontend  │    │  API/Gateway│    │ Orchestration │
+│ Next.js +  │──▶ │  Fastify +  │──▶ │ Planner/Coder/│
+│ WebSocket  │    │  OPA/PDP    │    │ Critic Engine │
+└─────┬──────┘    └─────┬──────┘    └──────┬────────┘
+      │                 │                 │
+      │                 │                 ▼
+      │                 │        ┌───────────────────┐
+      │                 │        │ State Fabric      │
+      │                 │        │ Postgres + Redis  │
+      │                 │        │ + Kafka + Outbox  │
+      │                 │        └───────────────────┘
+      │                 │                 │
+      ▼                 ▼                 ▼
+┌────────────┐   ┌────────────┐   ┌────────────┐
+│ OpenTelemetry│ │ Security & │ │ Evaluation & │
+│ Collector    │ │ Compliance │ │ Guardrails   │
+└──────────────┘ └────────────┘ └──────────────┘
 ```
+- **Zero trust**: mTLS everywhere, policy decision point (OPA) in gateway.
+- **Deterministic workflows**: Event-sourced orchestration with idempotent steps and saga-based compensation.
+- **Security by default**: OWASP ASVS v5 & LLM Top 10 controls embedded at phase start, not retrofitted.
 
-**Deliverable:** Working Node.js server that starts and responds to health checks
-
-### Phase 1.2: Database Foundation
-**Copilot Task:**
-```
-Add PostgreSQL integration:
-- Database connection setup with environment variables
-- Connection health check endpoint /health/db
-- Basic error handling for database failures
-- Docker Compose file with PostgreSQL service
-- Database migration folder structure (using node-pg-migrate)
-```
-
-**Deliverable:** API that connects to PostgreSQL and reports database health
-
-### Phase 1.3: Redis Integration
-**Copilot Task:**
-```
-Add Redis caching layer:
-- Redis connection setup
-- Cache health check endpoint /health/cache
-- Basic caching utility functions (get, set, delete)
-- Update Docker Compose to include Redis
-- Error handling for Redis failures
-```
-
-**Deliverable:** Complete backend foundation with PostgreSQL + Redis + health monitoring
+## Phase 0 – Foundation & Approval (see `03_First_step_approval_needed.md`)
+_No development work begins before Phase 0 exit criteria are met._
 
 ---
 
-## Phase 2: Basic API Development (Week 2)
-**Goal:** Core REST API with authentication and basic CRUD operations
+## Phase 1 (Weeks 1-2): Secure Platform Substrate
+**Goals**: Stand up hardened infrastructure, baseline services, and non-negotiable security/observability controls in code.
 
-### Phase 2.1: Authentication System
-**Copilot Task:**
-```
-Implement JWT-based authentication:
-- User registration endpoint POST /auth/register
-- Login endpoint POST /auth/login
-- JWT token generation and validation middleware
-- Password hashing (bcrypt)
-- Basic user model and database table
-- OWASP ASVS v5.0 V2 (Authentication) controls
-```
+### Workstreams
+1. **Infrastructure & Networking**
+   - Apply Terraform modules for VPC, subnets, security groups, Postgres (Aurora or RDS), Redis (Elasticache), and Kafka (MSK/Confluent Cloud) with private endpoints only.
+   - Configure service mesh (Istio/Linkerd) for mutual TLS and traffic policy enforcement; integrate with cert-manager for rotation.
+2. **Service Skeleton**
+   - Initialize monorepo with PNPM workspaces: `apps/api`, `apps/web`, `apps/agent`, `packages/core`, `packages/errors`.
+   - Implement Fastify backend scaffold with RFC 9457 error middleware and OpenAPI 3.1 spec generator.
+   - Provide health endpoints with dependency checks (Postgres, Redis, Kafka, Vault, OTel Collector) returning standardized problem details on failure.
+3. **Observability & Logging**
+   - Embed OpenTelemetry SDK (Node auto-instrumentation) in API and agent processes; configure OTLP exporter to collector deployed via Helm.
+   - Example collector config snippet:
+     ```yaml
+     exporters:
+       otlphttp:
+         endpoint: https://otel-gateway.internal:4318
+         tls:
+           ca_file: /etc/certs/rootCA.pem
+     service:
+       pipelines:
+         traces:
+           receivers: [otlp]
+           processors: [batch, resource]
+           exporters: [otlphttp]
+     ```
+4. **CI/CD Enforcement**
+   - Implement GitHub Actions workflow `ci.yml` running lint/test/build, `security.yml` running CodeQL/Semgrep/Trivy/ggshield, and `supply-chain.yml` generating CycloneDX SBOM + SLSA provenance via `slsa-framework/slsa-github-generator`.
+   - Fail merges on any high severity vulnerability.
+5. **Baseline Policies**
+   - Deploy Open Policy Agent sidecar for API authorization; author rego policies for role-based access and rate limiting.
+   - Configure Vault Agent for secret injection; run rotation smoke test.
 
-**Deliverable:** Working auth system with user registration and login
+### Deliverables
+- Hardened infrastructure stack deployed to dev & staging.
+- Monorepo with baseline services, lint/test tooling, and enforcement of commit signing.
+- OTel collector receiving traces from synthetic Planner→Coder→Critic workflow (mocked).
+- CI/CD pipelines green with signed provenance artifacts stored in registry.
 
-### Phase 2.2: Project Management API
-**Copilot Task:**
-```
-Create project CRUD endpoints:
-- POST /projects (create project)
-- GET /projects (list user's projects)
-- GET /projects/:id (get project details)
-- PUT /projects/:id (update project)
-- DELETE /projects/:id (delete project)
-- Database schema for projects table
-- Proper error handling using RFC 9457 format
-```
-
-**Deliverable:** Complete project management API with proper error responses
-
-### Phase 2.3: File Management API
-**Copilot Task:**
-```
-Add file handling capabilities:
-- POST /projects/:id/files (upload/create file)
-- GET /projects/:id/files (list project files)
-- GET /projects/:id/files/:fileId (get file content)
-- PUT /projects/:id/files/:fileId (update file)
-- DELETE /projects/:id/files/:fileId (delete file)
-- File storage system (local filesystem)
-- File metadata database table
-```
-
-**Deliverable:** Working file management system
+### Success Metrics & Gates
+- Coverage reports ≥ 80% on core packages before exit.
+- PagerDuty synthetic checks confirm alert flow (<5 min MTTD).
+- Security officer approval of IaC scan report (OPA/Checkov) and vulnerability scans.
 
 ---
 
-## Phase 3: Frontend Foundation (Week 3)
-**Goal:** Basic React frontend that connects to the API
+## Phase 2 (Weeks 2-3): Distributed State & Event Fabric
+**Goals**: Implement resilient state management, transactional outbox, and self-healing primitives required for multi-agent coordination.
 
-### Phase 3.1: React Setup
-**Copilot Task:**
-```
-Create Next.js React frontend:
-- Next.js project setup with TypeScript
-- Tailwind CSS for styling
-- Basic routing structure
-- Authentication components (login/register forms)
-- API client setup (axios/fetch wrapper)
-- Environment configuration
-```
+### Workstreams
+1. **Postgres Schema & Versioning**
+   - Define schemas for `projects`, `tasks`, `agent_runs`, `events`, `artifacts`; use `node-pg-migrate` with migration signing.
+   - Implement row-level security (RLS) with policies per tenant.
+2. **Event Sourcing Layer**
+   - Build transactional outbox pattern: triggers writing to `event_outbox`; Debezium connector ships events to Kafka topics (`planner.commands`, `agent.status`, `audit.log`).
+   - Implement idempotency keys and saga orchestrations using `bullmq` workers backed by Redis streams for retries.
+3. **State APIs**
+   - Expose gRPC service (`state.StateService`) for reading/writing agent context with optimistic locking.
+   - Provide snapshot + delta strategy: snapshot stored in Postgres JSONB, deltas in Kafka for replay.
+4. **Resilience & Self-Healing**
+   - Configure Kubernetes HPA + pod disruption budgets; enable Argo Rollouts canaries with automated rollback on health degradation.
+   - Implement chaos tests (Litmus) simulating Kafka/Postgres outages; ensure orchestrator auto-recovers within MTTR target.
 
-**Deliverable:** React app with working login/register pages
+### Deliverables
+- Operational Kafka cluster with ACLs, TLS, schema registry enforcing Avro/JSON schema evolution.
+- Documented state diagrams and saga definitions stored in `/docs/architecture/state-machine.md`.
+- Automated replay job verifying deterministic rebuild of agent state from event log nightly.
 
-### Phase 3.2: Project Management UI
-**Copilot Task:**
-```
-Build project management interface:
-- Projects list page
-- Create new project form
-- Project detail page
-- File browser component
-- Basic responsive design
-- Error handling and loading states
-```
-
-**Deliverable:** Working project management UI
-
-### Phase 3.3: Code Editor Integration
-**Copilot Task:**
-```
-Add code editing capabilities:
-- Monaco Editor integration (VS Code editor)
-- File tree navigation
-- Tabbed file editing
-- Syntax highlighting for common languages
-- Save file functionality
-- Basic file operations (create, rename, delete)
-```
-
-**Deliverable:** Working in-browser code editor
+### Gates
+- Replay success rate ≥ 99.9% in staging.
+- Chaos test report demonstrating recovery < 10 minutes for orchestrator outage.
+- Compliance sign-off on audit topic retention (≥ 365 days, WORM storage snapshot).
 
 ---
 
-## Phase 4: WebSocket Real-time Foundation (Week 4)
-**Goal:** Real-time communication between frontend and backend
+## Phase 3 (Weeks 3-4): Secure API & Access Control Layer
+**Goals**: Deliver hardened REST/WebSocket gateway compliant with OWASP ASVS v5 from the outset.
 
-### Phase 4.1: WebSocket Backend
-**Copilot Task:**
-```
-Implement WebSocket server:
-- Socket.io server setup
-- User authentication for WebSocket connections
-- Basic room management (project-based rooms)
-- Message broadcasting to project participants
-- Connection management and error handling
-```
+### Workstreams
+1. **Authentication & IAM**
+   - Integrate enterprise IdP (OIDC/SAML) with PKCE; implement short-lived JWT access tokens and refresh token rotation.
+   - Enforce step-up MFA for privileged operations via OPA policy.
+2. **Authorization & Governance**
+   - Implement fine-grained RBAC/ABAC (project roles, data sensitivity labels) using Cedar or OPA.
+   - Add policy decision logs streamed to Kafka `audit.log` topic.
+3. **API Endpoints**
+   - Build RFC 9457-compliant endpoints for projects, files, agent runs with strict JSON schema validation (Ajv) and content security policies.
+   - WebSocket channel using Socket.IO with token binding + rate limiting.
+4. **Security Testing**
+   - Run OWASP ZAP/Burp automation in CI; integrate results into merge gate.
 
-**Deliverable:** WebSocket server that handles authenticated connections
+### Deliverables
+- Hardened API gateway with documented OpenAPI spec and security schemes.
+- Automated regression tests (Supertest + Pact) verifying authz decisions.
+- WebSocket auth handshake with observability spans and structured logs.
 
-### Phase 4.2: WebSocket Frontend
-**Copilot Task:**
-```
-Add WebSocket client to React:
-- Socket.io client integration
-- Real-time connection status indicator
-- Live operation logs component
-- Message handling and display
-- Reconnection logic
-```
-
-**Deliverable:** Real-time communication between frontend and backend
-
-### Phase 4.3: Live Operations Display
-**Copilot Task:**
-```
-Create real-time operations dashboard:
-- Live streaming console component
-- Operation progress indicators
-- Expandable/collapsible log sections
-- Export functionality for logs
-- Status indicators for system components
-```
-
-**Deliverable:** Live operations monitoring interface
+### Gates
+- Zero high findings in DAST penetration test.
+- 100% endpoints return RFC 9457 payloads in negative tests.
+- Legal review of privacy notices for telemetry and audit logging.
 
 ---
 
-## Phase 5: Basic AI Integration (Week 5)
-**Goal:** Single AI model integration with simple code generation
+## Phase 4 (Weeks 4-5): Frontend & Real-Time Experience
+**Goals**: Ship Next.js interface with secure session handling, telemetry, and compliance-ready UX.
 
-### Phase 5.1: AI Model Setup
-**Copilot Task:**
-```
-Integrate one AI model (OpenAI GPT):
-- OpenAI API client setup
-- Environment variables for API keys
-- Basic prompt/response handling
-- Error handling for API failures
-- Rate limiting implementation
-- Cost tracking for API calls
-```
+### Workstreams
+1. **Next.js App Hardening**
+   - Implement Content Security Policy, Subresource Integrity, HTTP security headers via Edge middleware.
+   - Integrate OTel web SDK for traces, capturing user interactions linked to backend spans.
+2. **Core UX**
+   - Build project dashboard, code editor (Monaco), live operations console tied to WebSocket updates.
+   - Provide accessibility (WCAG 2.2 AA) and localization scaffolding.
+3. **Secure File Handling**
+   - Implement streaming downloads with anti-malware scanning (ClamAV/Elastic Malware Detector) via backend before exposing to client.
 
-**Deliverable:** Working AI model integration
+### Deliverables
+- Frontend deployed to staging behind WAF (AWS WAF/Cloudflare) with bot management enabled.
+- Real-time operations panel showing Planner/Coder/Critic span data.
+- Automated UI tests (Playwright) running in CI with visual regression baselines.
 
-### Phase 5.2: Simple Code Generation
-**Copilot Task:**
-```
-Implement basic code generation:
-- POST /ai/generate endpoint
-- Simple prompt interface in frontend
-- Code generation for basic functions
-- Response streaming to frontend via WebSocket
-- Generated code display in editor
-- Save generated code functionality
-```
-
-**Deliverable:** Working code generation with one AI model
-
-### Phase 5.3: Model Performance Tracking
-**Copilot Task:**
-```
-Add AI model monitoring:
-- Response time tracking
-- Cost per request calculation
-- Success/failure rate monitoring
-- Basic analytics dashboard
-- Model performance metrics API
-```
-
-**Deliverable:** AI performance monitoring system
+### Gates
+- OWASP Application Security Verification Level 2 checklist signed for frontend.
+- Accessibility audit passing (axe-core score ≥ 90).
 
 ---
 
-## Phase 6: Multi-Model Support (Week 6)
-**Goal:** Support multiple AI providers with failover
+## Phase 5 (Weeks 5-6): Orchestration Engine & Deterministic Workflows
+**Goals**: Implement Planner→Coder→Critic workflow on top of state fabric with deterministic execution and rollback.
 
-### Phase 6.1: Model Abstraction Layer
-**Copilot Task:**
-```
-Create AI model adapter system:
-- Abstract AI provider interface
-- OpenAI adapter implementation
-- Anthropic (Claude) adapter implementation
-- Google (Gemini) adapter implementation
-- Provider configuration management
-- Unified response format
-```
+### Workstreams
+1. **Workflow Engine**
+   - Build orchestrator service using Temporal.io or custom state machine library with persistence in Postgres/Kafka.
+   - Define workflow steps, compensation logic, and manual intervention hooks with Slack/Teams integrations.
+2. **Shared Memory Model**
+   - Implement shared context store (Redis JSON) with schema validation; enforce TTL and audit trails for context mutations.
+3. **Failure Handling**
+   - Add circuit breakers (resilience4node) and exponential backoff for external API calls.
+   - Implement automatic rollback triggers invoking Git operations (revert commits) and state compensation.
+4. **Telemetry**
+   - Extend OTel instrumentation to record workflow spans, linking to evaluation metrics.
 
-**Deliverable:** Multi-provider AI system
+### Deliverables
+- Executable workflow orchestrating mock agents with deterministic replay tests.
+- Runbook for incident response covering stuck workflows and partial failures.
+- Dashboards showing workflow success/failure KPIs and latency percentiles.
 
-### Phase 6.2: Model Selection & Failover
-**Copilot Task:**
-```
-Implement intelligent model selection:
-- Model selection dropdown in UI
-- Automatic failover on provider failures
-- Load balancing between models
-- Model-specific optimization (cost vs quality)
-- Provider health monitoring
-```
-
-**Deliverable:** Smart model selection with failover
-
-### Phase 6.3: Advanced AI Features
-**Copilot Task:**
-```
-Add advanced AI capabilities:
-- Context-aware code generation (reads existing files)
-- Multi-file code generation
-- Code explanation and documentation
-- Error analysis and debugging suggestions
-- Template-based generation
-```
-
-**Deliverable:** Advanced AI coding capabilities
+### Gates
+- 95%+ automated workflow success on staging synthetic load (500 concurrent requests).
+- MTTR in chaos experiments ≤ 60 minutes with auto rollback validated.
 
 ---
 
-## Phase 7: Basic Orchestration (Week 7-8)
-**Goal:** Simple multi-agent workflow (Planner → Coder → Critique)
+## Phase 6 (Weeks 6-7): AI Model Integration & Guardrails
+**Goals**: Introduce real models under strict governance, guardrails, and evaluation harnesses.
 
-### Phase 7.1: Task Planning Agent
-**Copilot Task:**
-```
-Implement Planner component:
-- Task decomposition logic
-- Simple planning prompt templates
-- Dependency analysis for tasks
-- Planning results storage and display
-- Integration with project management
-```
+### Workstreams
+1. **Model Adapter Framework**
+   - Implement provider-agnostic adapter interface with support for OpenAI, Anthropic, and Vertex AI; include streaming responses.
+   - Record request/response metadata (excluding sensitive content) in model registry with lineage.
+2. **Guardrails & Filtering**
+   - Deploy prompt/response moderation pipeline (Guardrails AI or NeMo Guardrails) with regex + semantic filters for PII, secrets, and malicious intent.
+   - Integrate LLM Top 10 mitigations: prompt injection detection, output sandbox validation, DoS protection.
+3. **Evaluation Harness**
+   - Run offline benchmark suite nightly (security coding tasks, compliance prompts); store metrics in Postgres for trend analysis.
+   - Gate deployment on evaluation thresholds (accuracy ≥ baseline, vulnerability rate < 5%).
+4. **Cost & Usage Controls**
+   - Implement per-model budgets, cost alerts, and auto-throttling with policy enforcement via OPA.
 
-**Deliverable:** Working task planning system
+### Deliverables
+- Model integration service deployed with guardrail enforcement toggles (audit + block modes).
+- Evaluation reports stored in `/docs/evaluations/` and surfaced in Grafana.
+- Automated vulnerability scanner (Bandit, Brakeman, ESLint security rules) triggered on generated code prior to merge.
 
-### Phase 7.2: Code Generation Agent
-**Copilot Task:**
-```
-Implement Coder component:
-- Execute plans from Planner
-- Generate code based on planning output
-- File creation and modification
-- Progress reporting during generation
-- Integration with existing code generation
-```
-
-**Deliverable:** Automated code generation from plans
-
-### Phase 7.3: Code Review Agent
-**Copilot Task:**
-```
-Implement Critique component:
-- Code quality analysis
-- Security vulnerability detection
-- Best practices checking
-- Improvement suggestions
-- Automated test generation
-- Integration with code generation workflow
-```
-
-**Deliverable:** Automated code review system
-
-### Phase 7.4: Orchestration Engine
-**Copilot Task:**
-```
-Create workflow orchestration:
-- State machine for Planner → Coder → Critique flow
-- Agent communication system
-- Workflow status tracking
-- Error handling and recovery
-- Manual intervention points
-- Workflow results aggregation
-```
-
-**Deliverable:** Complete basic autonomous workflow
+### Gates
+- Evaluation harness passes baseline metrics three consecutive runs.
+- Guardrail coverage report demonstrating 100% moderation on red team prompt suite.
+- Legal/compliance approval of model usage terms and DPIA.
 
 ---
 
-## Phase 8: Testing & Quality Assurance (Week 9)
-**Goal:** Automated testing and quality gates
+## Phase 7 (Weeks 7-8): Autonomous Workflow Validation & QA
+**Goals**: Ensure AI-generated code meets quality, security, and compliance standards automatically.
 
-### Phase 8.1: Testing Infrastructure
-**Copilot Task:**
-```
-Set up comprehensive testing:
-- Jest/Vitest for unit tests
-- Supertest for API integration tests
-- Playwright for E2E tests
-- Test database setup
-- CI/CD pipeline with GitHub Actions
-- Test coverage reporting
-```
+### Workstreams
+1. **Continuous Testing**
+   - Integrate unit/integration/E2E tests generated by Critic agent with coverage enforcement (≥ 85%).
+   - Introduce contract tests for external services using Pact.
+2. **Static & Dynamic Analysis**
+   - Extend pipelines with `npm audit`, `trivy fs`, dependency review; auto-create remediation tickets for findings.
+   - Execute container scanning and runtime security tests (Falco policies) in staging.
+3. **Human-in-the-loop Review**
+   - Implement gated approval workflow: critical PRs require security reviewer sign-off, using GitHub CODEOWNERS.
+4. **Audit Trails**
+   - Ensure every agent action writes to append-only audit log with user/model attribution.
 
-**Deliverable:** Complete testing infrastructure
+### Deliverables
+- QA dashboard correlating workflow runs, test outcomes, and vulnerabilities.
+- Automated rollback workflow triggered on QA gate failure.
 
-### Phase 8.2: Automated Code Testing
-**Copilot Task:**
-```
-Implement AI-generated code testing:
-- Automatic test generation for AI code
-- Test execution and reporting
-- Quality gates for generated code
-- Integration with Critique component
-- Test result dashboard
-```
-
-**Deliverable:** Automated testing for AI-generated code
+### Gates
+- No critical vulnerabilities outstanding > 48h.
+- Compliance review of audit trail completeness and tamper evidence.
 
 ---
 
-## Phase 9: DevOps & Deployment (Week 10)
-**Goal:** Production-ready deployment and monitoring
+## Phase 8 (Weeks 8-9): DevSecOps Automation & Release Management
+**Goals**: Mature CI/CD into progressive delivery with compliance evidence baked in.
 
-### Phase 9.1: Container Orchestration
-**Copilot Task:**
-```
-Production Docker setup:
-- Multi-stage Dockerfile for backend
-- Docker Compose for local development
-- Production-ready Docker Compose
-- Environment-specific configurations
-- Health checks and restart policies
-```
+### Workstreams
+1. **Progressive Delivery**
+   - Implement Argo CD + Argo Rollouts with automated canaries; integrate policy checks (Kyverno/Gatekeeper) enforcing pod security, resource quotas.
+2. **Change Management**
+   - Automate change records via ServiceNow/Jira integration using webhooks; attach SLSA attestations and test reports.
+3. **Supply Chain Security**
+   - Adopt `sigstore/cosign` for image signing, verify signatures in admission controller.
+4. **Documentation Automation**
+   - Generate release notes, architecture diffs, and compliance evidence (ISO 42001 mapping) via CI jobs.
 
-**Deliverable:** Containerized deployment system
+### Deliverables
+- GitOps pipeline deploying to staging/production via signed manifests.
+- Change management automation with audit-ready records.
 
-### Phase 9.2: CI/CD Pipeline
-**Copilot Task:**
-```
-Complete CI/CD implementation:
-- GitHub Actions workflows
-- SAST scanning (CodeQL)
-- Secrets scanning
-- SBOM generation (CycloneDX 1.6)
-- SLSA v1.0 provenance
-- Automated deployment
-```
-
-**Deliverable:** Full CI/CD pipeline
-
-### Phase 9.3: Monitoring & Observability
-**Copilot Task:**
-```
-Implement OpenTelemetry monitoring:
-- OpenTelemetry Collector setup
-- Distributed tracing
-- Metrics collection
-- Log aggregation
-- Performance monitoring dashboard
-- Alert configuration
-```
-
-**Deliverable:** Complete observability stack
+### Gates
+- Production deployment blocked unless cosign signature verified and policy compliance attested.
+- Release readiness review approved by Security, Compliance, SRE leads.
 
 ---
 
-## Phase 10: Security & Compliance (Week 11)
-**Goal:** Enterprise-grade security implementation
+## Phase 9 (Weeks 9-10): Advanced Orchestration Resilience & Self-Healing
+**Goals**: Expand resiliency features, self-healing, and advanced coordination strategies.
 
-### Phase 10.1: Security Hardening
-**Copilot Task:**
-```
-Implement OWASP ASVS v5.0 controls:
-- V2 Authentication controls
-- V3 Session management
-- V10 Malicious code controls
-- Input validation and sanitization
-- SQL injection prevention
-- XSS protection
-```
+### Workstreams
+1. **Adaptive Orchestration**
+   - Add reinforcement learning or heuristic policies for agent selection/fallback based on past success metrics.
+   - Implement dynamic parallelization with concurrency control and fairness (per-tenant quotas).
+2. **Self-Healing**
+   - Build anomaly detection pipeline (Prometheus + Thanos + Alertmanager) with auto-remediation scripts (Argo Workflows) to restart stuck agents.
+3. **Knowledge Base Integration**
+   - Persist postmortems and lessons learned into knowledge base accessible to Planner for future recommendations.
 
-**Deliverable:** OWASP ASVS compliant security
+### Deliverables
+- Orchestrator automatically reroutes tasks on agent failure with <5% impact to completion time.
+- Anomaly detection dashboards with alert playbooks.
 
-### Phase 10.2: LLM Security Controls
-**Copilot Task:**
-```
-Implement OWASP Top 10 for LLM Applications (2025):
-- LLM01: Prompt Injection prevention
-- LLM02: Insecure Output Handling
-- LLM04: Model Denial of Service protection
-- LLM05: Supply Chain vulnerabilities
-- Input/output filtering and validation
-```
-
-**Deliverable:** LLM-specific security controls
-
-### Phase 10.3: Compliance Implementation
-**Copilot Task:**
-```
-Add compliance frameworks:
-- ISO/IEC 42001 governance logging
-- EU AI Act GPAI transparency measures
-- Audit trail implementation
-- Data protection controls
-- Copyright compliance for AI outputs
-```
-
-**Deliverable:** Compliance-ready system
+### Gates
+- Demonstrated failover drills documented with metrics.
+- Knowledge base entries linked to ISO 42001 continuous improvement controls.
 
 ---
 
-## Phase 11: Advanced Features (Week 12-13)
-**Goal:** Enhanced user experience and advanced capabilities
+## Phase 10 (Weeks 10-11): Performance, Scalability & Cost Optimization
+**Goals**: Tune system for enterprise scale while maintaining compliance and observability.
 
-### Phase 11.1: Advanced UI Features
-**Copilot Task:**
-```
-Enhance user interface:
-- Dark/light theme toggle
-- Voice-to-text integration (Web Speech API)
-- Input history and favorites
-- Template prompts system
-- Advanced file browser with search
-- Drag-and-drop file operations
-```
+### Workstreams
+1. **Performance Testing**
+   - Conduct k6/gatling load tests hitting REST, WebSocket, and workflow endpoints; track p95 latency ≤ 300ms.
+2. **Caching & Optimization**
+   - Implement query caching strategies (Redis, Postgres materialized views) with cache invalidation policies.
+   - Optimize frontend bundle via code splitting, prefetching, HTTP/3.
+3. **Cost Management**
+   - Integrate cloud cost dashboards (AWS Cost Explorer, GCP Billing) with budgets/alerts.
 
-**Deliverable:** Enhanced user experience
+### Deliverables
+- Performance test reports stored under `/docs/performance/` with tuning recommendations.
+- Autoscaling policies adjusted based on observed workloads.
 
-### Phase 11.2: Performance Optimization
-**Copilot Task:**
-```
-Optimize system performance:
-- Database query optimization
-- Caching strategies implementation
-- API response time improvements
-- Frontend bundle optimization
-- WebSocket connection optimization
-- Resource usage monitoring
-```
-
-**Deliverable:** High-performance system
-
-### Phase 11.3: Advanced Orchestration
-**Copilot Task:**
-```
-Enhance orchestration capabilities:
-- Context-aware task planning
-- Adaptive learning from past executions
-- Error recovery and self-healing
-- Advanced state management
-- Parallel task execution
-- Dynamic workflow adjustment
-```
-
-**Deliverable:** Advanced autonomous capabilities
+### Gates
+- Capacity plan approved (supports 10k concurrent sessions, 1k workflows/hour).
+- Cost/performance review signed by Finance & Engineering.
 
 ---
 
-## Phase 12: Production Readiness (Week 14-15)
-**Goal:** Enterprise deployment preparation
+## Phase 11 (Weeks 11-12): Production Readiness & Compliance Certification
+**Goals**: Finalize compliance artifacts, disaster recovery, and business continuity.
 
-### Phase 12.1: Scalability Features
-**Copilot Task:**
-```
-Implement scalability solutions:
-- Load balancing configuration
-- Database connection pooling
-- Redis clustering setup
-- Horizontal scaling preparations
-- Resource usage optimization
-- Performance benchmarking
-```
+### Workstreams
+1. **Compliance Evidence**
+   - Compile ISO/IEC 42001 documentation, EU AI Act transparency package (model cards, data sheets, user disclosures).
+   - Conduct internal audit simulating regulator review; track remediations.
+2. **DR & BCP**
+   - Execute full failover to secondary region; verify RTO/RPO targets.
+   - Automate backups (AWS Backup/Velero) with restoration drills.
+3. **Security Validation**
+   - Commission third-party penetration test + LLM red-team exercise; integrate findings into backlog.
 
-**Deliverable:** Scalable architecture
+### Deliverables
+- Compliance binder with signed attestations, risk register, DPIA, DPIAs.
+- Documented DR test results and updated runbooks.
 
-### Phase 12.2: Backup & Recovery
-**Copilot Task:**
-```
-Implement data protection:
-- Automated backup systems
-- Point-in-time recovery
-- Disaster recovery procedures
-- Data retention policies
-- Cross-region replication setup
-- Recovery testing automation
-```
-
-**Deliverable:** Enterprise data protection
-
-### Phase 12.3: Documentation & Maintenance
-**Copilot Task:**
-```
-Complete documentation:
-- API documentation (OpenAPI 3.0)
-- Deployment guides
-- Troubleshooting documentation
-- User manuals
-- Developer onboarding guides
-- Maintenance procedures
-```
-
-**Deliverable:** Complete documentation suite
+### Gates
+- Zero open Sev-1 findings from pen test.
+- Executive go/no-go meeting approves readiness.
 
 ---
 
-## Phase 13: Final Integration & Testing (Week 16)
-**Goal:** Complete system validation and deployment
+## Phase 12 (Weeks 12-13): Launch, Monitoring, and Continuous Improvement
+**Goals**: Execute production launch with live monitoring, feedback loops, and continuous compliance.
 
-### Phase 13.1: End-to-End Testing
-**Copilot Task:**
-```
-Comprehensive system testing:
-- Full workflow testing
-- Performance testing under load
-- Security penetration testing
-- Disaster recovery testing
-- User acceptance testing scenarios
-- Integration testing with all components
-```
+### Workstreams
+1. **Go-Live**
+   - Run production cutover playbook, execute smoke tests, and enable feature flags gradually.
+2. **Post-Launch Monitoring**
+   - Establish war room with real-time dashboards; track KPIs (workflow success ≥ 97%, error rate < 1%).
+3. **Continuous Compliance**
+   - Schedule recurring control reviews, quarterly red-team, monthly AI evaluation refresh.
+   - Automate evidence collection (OTel traces, audit logs) into compliance data lake.
 
-**Deliverable:** Fully tested system
+### Deliverables
+- Production system live with 24/7 monitoring and on-call rotations.
+- Continuous improvement backlog prioritized via retrospectives.
 
-### Phase 13.2: Production Deployment
-**Copilot Task:**
-```
-Deploy production system:
-- Production environment setup
-- SSL/TLS configuration
-- Domain and DNS setup
-- Production monitoring configuration
-- Backup verification
-- Go-live procedures
-```
-
-**Deliverable:** Live production system
+### Gates
+- 30-day post-launch review demonstrating adherence to SLOs and zero major incidents.
+- Compliance sign-off of initial operating report.
 
 ---
 
-## Execution Strategy
+## Compliance & Quality Gate Matrix
+| Phase | Key Evidence | Automated Checks | Manual Approvals |
+|-------|--------------|------------------|------------------|
+| 0 | Governance charter, IaC plan | CI security bootstrap | Security, Compliance officers |
+| 1 | CI/CD logs, OTel traces | `ci.yml`, `security.yml` | ADB architecture review |
+| 2 | Event replay report | Chaos tests, saga replay | SRE, Compliance |
+| 3 | DAST reports, OpenAPI spec | OWASP ZAP CI | Security lead |
+| 4 | Accessibility audit, Playwright | CI visual regression | Product, UX |
+| 5 | Workflow runbooks | Temporal unit tests | SRE, Product |
+| 6 | Evaluation metrics, guardrail logs | Nightly eval pipeline | AI Governance Board |
+| 7 | QA dashboard, audit logs | Automated gating | QA lead |
+| 8 | Signed manifests, change tickets | GitOps policy checks | Release manager |
+| 9 | Failover drill results | Anomaly detection tests | SRE |
+|10 | Performance reports | k6 load tests | Engineering leadership |
+|11 | Compliance binder, DR report | Backup verification | Compliance, Executive sponsor |
+|12 | Post-launch review | SLO monitoring | Steering committee |
 
-### For Each Phase:
-1. **Single Copilot Task**: Give Copilot one specific task at a time
-2. **Test Before Proceeding**: Ensure each phase works before moving to next
-3. **Incremental Building**: Each phase builds on previous working foundation
-4. **Documentation**: Document any manual fixes needed for future reference
+---
 
-### Sample Copilot Command Format:
-```
-"Based on the current codebase, implement [specific feature from phase]. 
-Requirements: [list specific requirements]
-Success criteria: [define what working looks like]
-Please create/modify files and open a PR with the implementation."
-```
+## Risk Mitigation Strategies
+- **AI Misbehavior**: Layered guardrails + evaluation gating, real-time anomaly detection on model outputs, human-in-the-loop override.
+- **Supply Chain Attacks**: Sigstore signing, SLSA provenance, dependency pinning, periodic `npm audit --production` with allowlist governance.
+- **Data Breach**: Zero-trust networking, RLS in Postgres, Kafka ACLs, encryption at rest (KMS) and in transit (mTLS), periodic penetration tests.
+- **Agent Coordination Failures**: Deterministic orchestration, saga compensations, state replay validation, targeted chaos engineering.
+- **Regulatory Drift**: Quarterly compliance reviews, automated control evidence capture, update backlog for new regulations.
 
-### Critical Success Factors:
-- ✅ **Never skip phases** - each builds on the previous
-- ✅ **Test thoroughly** - broken foundation breaks everything after
-- ✅ **Keep tasks specific** - vague requests lead to incomplete implementations
-- ✅ **Manual verification** - always test what Copilot builds
-- ✅ **Document issues** - track what Copilot struggles with for future phases
+## Monitoring & Alerting Approach
+- **Metrics**: Prometheus + Grafana dashboards for latency, throughput, error rates, queue depth, cost.
+- **Tracing**: OpenTelemetry spans correlated with logs for Planner→Coder→Critic, enabling root cause < 15 minutes.
+- **Logging**: Structured JSON logs shipped to Loki/Elastic with PII scrubbing; audit logs stored in immutable S3 bucket with Object Lock.
+- **Alerting**: Multi-channel notifications (PagerDuty, Slack). Severity mapping aligned with ITIL incident response.
 
-This roadmap transforms your ambitious spec.md into actionable, sequential development phases that Copilot Agent can successfully execute.
+## Disaster Recovery & Business Continuity
+- **Multi-region deployment** with active/standby Postgres via logical replication, Redis cluster with cross-region replication, Kafka MirrorMaker 2.
+- **Backups**: Nightly full + 15-minute incremental snapshots; automated verification job restores to isolated environment.
+- **Runbooks**: Documented failover/rollback procedures with decision matrix; tabletop exercises each quarter.
+
+## Continuous Improvement Loop
+- Monthly retrospectives feeding into roadmap adjustments.
+- Post-incident reviews stored in knowledge base and linked to Planner heuristics.
+- KPI reviews (SLOs, evaluation metrics, cost) drive backlog prioritization.
+
+This plan embeds enterprise security, compliance, and reliability controls from day zero while enabling rapid, auditable delivery of the autonomous multi-agent coding platform.
