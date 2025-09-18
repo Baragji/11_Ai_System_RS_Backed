@@ -8,7 +8,7 @@ import { problemErrorHandler } from './lib/problem.js';
 import { verifyPostgres, postgresPool } from './lib/postgres.js';
 import { redisClient, verifyRedis } from './lib/redis.js';
 import { kafka, verifyKafka } from './lib/kafka.js';
-import { verifyAccessToken, type AuthContext } from './lib/oidc.js';
+import { verifyAccessToken } from './lib/oidc.js';
 import { registerHealthRoutes } from './routes/health.js';
 import { registerTaskRoutes, type TaskPayload } from './routes/tasks.js';
 

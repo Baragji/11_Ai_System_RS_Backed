@@ -39,10 +39,14 @@ data:
         endpoint: https://prometheus.telemetry.prod.company.com/api/v1/write
       logging:
         loglevel: error
+    extensions:
+      health_check:
+        endpoint: 0.0.0.0:13133
     service:
       telemetry:
         logs:
           level: "INFO"
+      extensions: [health_check]
       pipelines:
         traces:
           receivers: [otlp]
@@ -85,6 +89,32 @@ spec:
               name: otlp-grpc
             - containerPort: 4318
               name: otlp-http
+            - containerPort: 13133
+              name: health
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 65534
+            readOnlyRootFilesystem: true
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - "ALL"
+          livenessProbe:
+            httpGet:
+              path: /
+              port: 13133
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            timeoutSeconds: 2
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /
+              port: 13133
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            timeoutSeconds: 2
+            failureThreshold: 3
           resources:
             requests:
               cpu: 250m
@@ -95,6 +125,7 @@ spec:
           volumeMounts:
             - name: otel-config
               mountPath: /conf
+              readOnly: true
       volumes:
         - name: otel-config
           configMap:
