@@ -25,7 +25,7 @@
 - **Deterministic workflows**: Event-sourced orchestration with idempotent steps and saga-based compensation.
 - **Security by default**: OWASP ASVS v5 & LLM Top 10 controls embedded at phase start, not retrofitted.
 
-## Phase 0 – Foundation & Approval (see `03_First_step_approval_needed.md`)
+## Phase 0 – Foundation & Approval (see `01_First_step_approval_needed.md`)
 _No development work begins before Phase 0 exit criteria are met._
 
 ---
