@@ -1,0 +1,58 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: tracing
+---
+apiVersion: jaegertracing.io/v1
+kind: Jaeger
+metadata:
+  name: production
+  namespace: tracing
+spec:
+  strategy: production
+  ingress:
+    enabled: true
+    security: oauth-proxy
+    options:
+      oauth-proxy-client-id: otel-jaeger
+      oauth-proxy-client-secret: /vault/secrets/jaeger/oauth-client
+  collector:
+    replicas: 3
+    maxReplicas: 6
+    options:
+      log-level: warn
+      collector.grpc-server.host-port: ":14250"
+    resources:
+      limits:
+        cpu: "1"
+        memory: 1Gi
+      requests:
+        cpu: 500m
+        memory: 512Mi
+  query:
+    replicas: 2
+    options:
+      log-level: info
+    resources:
+      limits:
+        cpu: 500m
+        memory: 512Mi
+      requests:
+        cpu: 250m
+        memory: 256Mi
+  storage:
+    type: elasticsearch
+    options:
+      es:
+        server-urls: https://es-tracing.prod.company.com:9200
+        index-prefix: jaeger-prod
+        username: jaeger_service
+        password: /vault/secrets/jaeger/elasticsearch
+        tls:
+          ca: /etc/pki/ca.crt
+    secretName: jaeger-elastic-credentials
+  sampling:
+    options:
+      default_strategy:
+        type: rateLimiting
+        param: 100

@@ -1,0 +1,30 @@
+import type { FastifyError, FastifyReply, FastifyRequest } from 'fastify';
+
+interface ProblemDetails {
+  type: string;
+  title: string;
+  status: number;
+  detail?: string;
+  instance: string;
+  errors?: unknown;
+}
+
+export function buildProblemDetails(error: FastifyError, request: FastifyRequest): ProblemDetails {
+  const statusCode = error.statusCode ?? 500;
+  return {
+    type: error.validation ? 'https://datatracker.ietf.org/doc/html/rfc9457#section-3.2' : 'about:blank',
+    title: error.message,
+    status: statusCode,
+    detail: error.validation ? 'Request validation failed' : error.message,
+    instance: request.url,
+    errors: error.validation
+  };
+}
+
+export function problemErrorHandler(error: FastifyError, request: FastifyRequest, reply: FastifyReply): void {
+  const body = buildProblemDetails(error, request);
+  void reply
+    .status(body.status)
+    .type('application/problem+json')
+    .send(body);
+}

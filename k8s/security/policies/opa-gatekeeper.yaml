@@ -1,0 +1,171 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: gatekeeper-system
+---
+apiVersion: operator.gatekeeper.sh/v1alpha1
+kind: Gatekeeper
+metadata:
+  name: gatekeeper
+  namespace: gatekeeper-system
+spec:
+  validatingWebhook: Enabled
+  mutatingWebhook: Enabled
+  image:
+    repository: openpolicyagent/gatekeeper
+    release: v3.13.0
+  audit:
+    interval: 30
+    logLevel: INFO
+---
+apiVersion: templates.gatekeeper.sh/v1beta1
+kind: ConstraintTemplate
+metadata:
+  name: k8srequiredlabels
+spec:
+  crd:
+    spec:
+      names:
+        kind: K8sRequiredLabels
+      validation:
+        openAPIV3Schema:
+          type: object
+          properties:
+            labels:
+              type: array
+              items:
+                type: string
+  targets:
+    - target: admission.k8s.gatekeeper.sh
+      rego: |
+        package k8srequiredlabels
+
+        violation[{
+          "msg": msg,
+          "details": {"missing_labels": missing}
+        }] {
+          provided := {label | input.review.object.metadata.labels[label]}
+          required := {label | label := input.parameters.labels[_]}
+          missing := required - provided
+          count(missing) > 0
+          msg := sprintf("Missing required labels: %v", [missing])
+        }
+---
+apiVersion: constraints.gatekeeper.sh/v1beta1
+kind: K8sRequiredLabels
+metadata:
+  name: require-security-labels
+spec:
+  enforcementAction: deny
+  match:
+    kinds:
+      - apiGroups: [""]
+        kinds: ["Pod"]
+  parameters:
+    labels: ["app", "owner", "data-classification"]
+---
+apiVersion: templates.gatekeeper.sh/v1beta1
+kind: ConstraintTemplate
+metadata:
+  name: k8sallowedrepos
+spec:
+  crd:
+    spec:
+      names:
+        kind: K8sAllowedRepos
+      validation:
+        openAPIV3Schema:
+          properties:
+            repos:
+              type: array
+              items:
+                type: string
+  targets:
+    - target: admission.k8s.gatekeeper.sh
+      rego: |
+        package k8sallowedrepos
+
+        default deny := false
+
+        violation[{
+          "msg": msg
+        }] {
+          image := input.review.object.spec.containers[_].image
+          approved := input.parameters.repos[_]
+          startswith(image, approved)
+          return
+        }
+
+        violation[{
+          "msg": msg
+        }] {
+          not approved_image
+          msg := sprintf("Container image not in approved registry: %v", [input.review.object.spec.containers[_].image])
+        }
+
+        approved_image {
+          some i
+          startswith(input.review.object.spec.containers[i].image, input.parameters.repos[_])
+        }
+---
+apiVersion: constraints.gatekeeper.sh/v1beta1
+kind: K8sAllowedRepos
+metadata:
+  name: enforce-approved-registries
+spec:
+  enforcementAction: deny
+  match:
+    kinds:
+      - apiGroups: [""]
+        kinds: ["Pod"]
+  parameters:
+    repos:
+      - 123456789012.dkr.ecr.us-east-1.amazonaws.com/
+      - registry.prod.company.com/
+---
+apiVersion: templates.gatekeeper.sh/v1beta1
+kind: ConstraintTemplate
+metadata:
+  name: k8spssbaseline
+spec:
+  crd:
+    spec:
+      names:
+        kind: K8sPSSBaseline
+  targets:
+    - target: admission.k8s.gatekeeper.sh
+      rego: |
+        package k8spssbaseline
+
+        violation[{
+          "msg": msg
+        }] {
+          container := input.review.object.spec.containers[_]
+          container.securityContext.privileged == true
+          msg := "Privileged containers are disallowed"
+        }
+        violation[{
+          "msg": msg
+        }] {
+          container := input.review.object.spec.containers[_]
+          not container.securityContext.runAsNonRoot
+          msg := "Containers must run as non-root"
+        }
+        violation[{
+          "msg": msg
+        }] {
+          sc := input.review.object.spec.securityContext
+          sc.fsGroup == 0
+          msg := "fsGroup of 0 is not allowed"
+        }
+---
+apiVersion: constraints.gatekeeper.sh/v1beta1
+kind: K8sPSSBaseline
+metadata:
+  name: enforce-pss-baseline
+spec:
+  match:
+    kinds:
+      - apiGroups: [""]
+        kinds: ["Pod"]
+  enforcementAction: deny
