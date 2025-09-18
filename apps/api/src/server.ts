@@ -11,6 +11,7 @@ import { kafka, verifyKafka } from './lib/kafka.js';
 import { verifyAccessToken } from './lib/oidc.js';
 import { registerHealthRoutes } from './routes/health.js';
 import { registerTaskRoutes, type TaskPayload } from './routes/tasks.js';
+import workflowRoutes from './routes/workflow.js';
 
 export function buildServer(): FastifyInstance {
   const app = Fastify({
@@ -86,6 +87,8 @@ export function buildServer(): FastifyInstance {
       });
     }
   });
+
+  void app.register(workflowRoutes);
 
   app.addHook('onClose', async () => {
     await Promise.all([
