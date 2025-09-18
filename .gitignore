@@ -5,3 +5,25 @@ apps/api/dist/
 .DS_Store
 *.log
 coverage/
+
+# Security scan artifacts
+*.sarif
+results.sarif
+trivy-results.sarif
+trivy-k8s-results.sarif
+trivy-dockerfile-results.sarif
+semgrep.sarif
+
+# Build artifacts
+dist/
+build/
+*.tsbuildinfo
+
+# SBOM files
+*.cdx.json
+sbom.cdx.json
+image.cdx.json
+
+# Cosign keys (should be in secrets)
+cosign.key
+cosign.pub

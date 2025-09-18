@@ -17,17 +17,24 @@ jobs:
   codeql:
     name: CodeQL Analysis
     runs-on: ubuntu-22.04
+    strategy:
+      fail-fast: false
+      matrix:
+        language: ['javascript']
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
       - name: Initialize CodeQL
         uses: github/codeql-action/init@v3
         with:
-          languages: javascript
+          languages: ${{ matrix.language }}
+          config-file: ./.github/codeql/codeql-config.yml
       - name: Autobuild
         uses: github/codeql-action/autobuild@v3
       - name: Perform CodeQL Analysis
         uses: github/codeql-action/analyze@v3
+        with:
+          category: "/language:${{matrix.language}}"
 
   semgrep:
     name: Semgrep Scan
@@ -38,11 +45,13 @@ jobs:
         uses: returntocorp/semgrep-action@v1
         with:
           config: "p/ci"
-          generateSarif: true
+        env:
+          SEMGREP_APP_TOKEN: ${{ secrets.SEMGREP_APP_TOKEN }}
       - name: Upload Semgrep SARIF
+        if: always()
         uses: github/codeql-action/upload-sarif@v3
         with:
-          sarif_file: semgrep.sarif
+          sarif_file: results.sarif
 
   dependency-security:
     name: Dependency Security
@@ -56,16 +65,18 @@ jobs:
       - name: Install dependencies
         run: npm ci
       - name: Run npm audit
-        run: npm audit --audit-level=high
+        run: npm audit --audit-level=high --production
       - name: Run Trivy filesystem scan
         uses: aquasecurity/trivy-action@0.20.0
         with:
           scan-type: fs
+          scan-ref: '.'
           severity: 'HIGH,CRITICAL'
           ignore-unfixed: true
           format: sarif
           output: trivy-results.sarif
       - name: Upload Trivy results
+        if: always()
         uses: github/codeql-action/upload-sarif@v3
         with:
           sarif_file: trivy-results.sarif

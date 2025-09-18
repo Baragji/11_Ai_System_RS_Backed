@@ -1,0 +1,79 @@
+name: infrastructure-security
+
+on:
+  push:
+    branches: ["main"]
+    paths:
+      - 'terraform/**'
+      - 'k8s/**'
+      - 'Dockerfile'
+      - '.github/workflows/**'
+  pull_request:
+    branches: ["main"]
+    paths:
+      - 'terraform/**'
+      - 'k8s/**'
+      - 'Dockerfile'
+      - '.github/workflows/**'
+
+permissions:
+  actions: read
+  contents: read
+  security-events: write
+
+jobs:
+  terraform-security:
+    name: Terraform Security Scan
+    runs-on: ubuntu-22.04
+    if: contains(github.event.head_commit.modified, 'terraform/') || contains(github.event.pull_request.changed_files.*.filename, 'terraform/')
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run tfsec
+        uses: aquasecurity/tfsec-action@v1.0.3
+        with:
+          working_directory: terraform
+          format: sarif
+          soft_fail: true
+      - name: Upload tfsec SARIF
+        if: always()
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: results.sarif
+
+  kubernetes-security:
+    name: Kubernetes Security Scan
+    runs-on: ubuntu-22.04
+    if: contains(github.event.head_commit.modified, 'k8s/') || contains(github.event.pull_request.changed_files.*.filename, 'k8s/')
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run Trivy for Kubernetes
+        uses: aquasecurity/trivy-action@0.20.0
+        with:
+          scan-type: config
+          scan-ref: k8s/
+          format: sarif
+          output: trivy-k8s-results.sarif
+      - name: Upload Kubernetes Trivy results
+        if: always()
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: trivy-k8s-results.sarif
+
+  dockerfile-security:
+    name: Dockerfile Security Scan
+    runs-on: ubuntu-22.04
+    if: contains(github.event.head_commit.modified, 'Dockerfile') || contains(github.event.pull_request.changed_files.*.filename, 'Dockerfile')
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run Trivy for Dockerfile
+        uses: aquasecurity/trivy-action@0.20.0
+        with:
+          scan-type: config
+          scan-ref: Dockerfile
+          format: sarif
+          output: trivy-dockerfile-results.sarif
+      - name: Upload Dockerfile Trivy results
+        if: always()
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: trivy-dockerfile-results.sarif
