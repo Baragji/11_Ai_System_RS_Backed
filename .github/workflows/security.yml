@@ -123,6 +123,23 @@ jobs:
         with:
           name: container-sbom
           path: image.cdx.json
+      - name: Ensure jq is installed
+        run: sudo apt-get update && sudo apt-get install -y jq
+      - name: Generate Syft JSON for license diagnostics
+        run: /usr/local/bin/syft ${{ env.IMAGE_NAME }}:${{ github.sha }} -o json > image.syft.json
+      - name: Print license diagnostics (name, version, licenses, paths)
+        shell: bash
+        run: |
+          jq -r '
+            .artifacts[] as $a
+            | [$a.name, $a.version, ($a.licenses // [] | map(.value) | join("|")), ($a.locations // [] | map(.path) | join("|"))]
+            | @tsv
+          ' image.syft.json | awk -F'\t' 'BEGIN{printf("%-40s %-20s %-25s %s\n","NAME","VERSION","LICENSES","PATHS"); print "--------------------------------------------------------------------------------------------------------------------------------"} {printf("%-40s %-20s %-25s %s\n",$1,$2,$3,$4)}'
+      - name: Upload Syft JSON artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: image-syft-json
+          path: image.syft.json
       - name: Trivy image scan
         uses: aquasecurity/trivy-action@0.20.0
         with:

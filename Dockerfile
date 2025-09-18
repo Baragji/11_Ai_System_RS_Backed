@@ -1,20 +1,23 @@
 # syntax=docker/dockerfile:1.6
-FROM node:20.11-bullseye-slim AS base
-WORKDIR /usr/src/app
-COPY package.json package-lock.json ./
-RUN npm install --omit=dev
 
+# Build stage: install deps (incl. dev), build, then prune to production-only
 FROM node:20.11-bullseye-slim AS build
-WORKDIR /usr/src/app
+WORKDIR /app
 COPY package.json package-lock.json ./
-RUN npm install
+RUN npm ci
 COPY apps ./apps
+# Build the API application
 RUN npm run build
+# Remove devDependencies to keep only production deps for runtime
+RUN npm prune --omit=dev
 
-FROM node:20.11-bullseye-slim AS production
-WORKDIR /usr/src/app
+# Runtime stage: distroless Node.js (smaller, fewer GPL/LGPL-licensed OS packages)
+FROM gcr.io/distroless/nodejs20-debian12 AS runtime
+WORKDIR /app
 ENV NODE_ENV=production
-COPY --from=base /usr/src/app/node_modules ./node_modules
-COPY --from=build /usr/src/app/apps/api/dist ./apps/api/dist
+# Copy production dependencies and built artifacts
+COPY --from=build /app/node_modules ./node_modules
+COPY --from=build /app/apps/api/dist ./apps/api/dist
 COPY apps/api/package.json ./apps/api/package.json
-CMD ["node", "apps/api/dist/index.js"]
+# Distroless node image has entrypoint set to `node`. Provide only the script path.
+CMD ["apps/api/dist/index.js"]
