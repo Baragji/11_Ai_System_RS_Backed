@@ -17,7 +17,16 @@ interface TaskDependencies {
 export function registerTaskRoutes(app: FastifyInstance, deps: TaskDependencies): void {
   app.post('/tasks', {
     schema: {
-      body: taskSchema
+      body: {
+        type: 'object',
+        required: ['taskId', 'agent', 'payload'],
+        properties: {
+          taskId: { type: 'string', format: 'uuid' },
+          agent: { type: 'string', enum: ['planner', 'coder', 'critic'] },
+          payload: { type: 'object' },
+          priority: { type: 'integer', minimum: 0, maximum: 10, default: 5 }
+        }
+      }
     }
   }, async (request, reply) => {
     const body = taskSchema.parse(request.body);
