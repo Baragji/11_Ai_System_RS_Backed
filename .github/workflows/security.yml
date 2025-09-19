@@ -206,9 +206,6 @@ jobs:
     name: Generate SLSA Provenance
     if: github.event_name == 'push'
     needs: container-build
-    env:
-      SUCCESS: true
-      CONTINUE: true
     permissions:
       actions: read
       id-token: write
@@ -242,7 +239,7 @@ jobs:
       - name: Verify Cosign signature (keyless)
         env:
           COSIGN_EXPERIMENTAL: "1"
-        run: cosign verify ${{ needs.container-build.outputs.image }}@${{ needs.container-build.outputs.digest }}
+        run: cosign verify $IMAGE_NAME@${{ needs.container-build.outputs.digest }}
       - name: Fail if attestation missing
         run: |
           # Extra guard: ensure IMAGE_NAME owner is lowercase (docker requires lowercase repository names)
