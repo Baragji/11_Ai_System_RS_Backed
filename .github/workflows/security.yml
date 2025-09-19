@@ -66,10 +66,11 @@ jobs:
       image: ${{ steps.image_ref.outputs.image_name }}:${{ github.sha }}
       image_name: ${{ steps.image_ref.outputs.image_name }}
       digest: ${{ steps.image_ref.outputs.digest }}
-    env:
-      IMAGE_NAME: ghcr.io/${{ toLower(github.repository_owner) }}/platform-api
     steps:
       - uses: actions/checkout@v4
+      - name: Set IMAGE_NAME
+        shell: bash
+        run: echo "IMAGE_NAME=ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/platform-api" >> "$GITHUB_ENV"
       - uses: actions/setup-node@v4
         with:
           node-version: '20'
@@ -124,6 +125,7 @@ jobs:
           curl -sSfL https://raw.githubusercontent.com/anchore/syft/main/install.sh | sh -s -- -b /usr/local/bin
           /usr/local/bin/syft ${{ env.IMAGE_NAME }}:${{ github.sha }} -o cyclonedx-json > image.cdx.json
       - name: Upload image SBOM
+        if: github.event_name == 'push'
         uses: actions/upload-artifact@v4
         with:
           name: container-sbom
@@ -201,10 +203,11 @@ jobs:
     needs:
       - container-build
       - generate-slsa
-    env:
-      IMAGE_NAME: ghcr.io/${{ toLower(github.repository_owner) }}/platform-api
     steps:
       - uses: actions/checkout@v4
+      - name: Set IMAGE_NAME
+        shell: bash
+        run: echo "IMAGE_NAME=ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/platform-api" >> "$GITHUB_ENV"
       - name: Verify Cosign signature
         env:
           COSIGN_EXPERIMENTAL: "1"
@@ -215,7 +218,7 @@ jobs:
           OWNER_PART=$(echo "$IMAGE_NAME" | awk -F'/' '{print $2}')
           if [[ "$OWNER_PART" =~ [A-Z] ]]; then
             echo "❌ IMAGE_NAME owner contains uppercase letters: $OWNER_PART"
-            echo "    Ensure the owner is lowercased, e.g. use toLower(github.repository_owner)"
+            echo "    Ensure the owner is lowercased (e.g., use \"${GITHUB_REPOSITORY_OWNER,,}\" when constructing IMAGE_NAME)"
             exit 1
           fi
 
