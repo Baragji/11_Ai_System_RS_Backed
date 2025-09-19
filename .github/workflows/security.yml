@@ -188,14 +188,14 @@ jobs:
         env:
           COSIGN_EXPERIMENTAL: "1"
         run: |
-          cosign sign --yes $IMAGE_NAME:${{ github.sha }}
+          cosign sign --yes $IMAGE_NAME@${{ steps.build.outputs.digest }}
 
       - name: Cosign Attest SBOM (keyless)
         if: github.event_name == 'push'
         env:
           COSIGN_EXPERIMENTAL: "1"
         run: |
-          cosign attest --predicate sbom.cdx.json --type cyclonedx $IMAGE_NAME:${{ github.sha }}
+          cosign attest --yes --predicate sbom.cdx.json --type cyclonedx $IMAGE_NAME@${{ steps.build.outputs.digest }}
       - name: Export image reference
         id: image_ref
         run: |
@@ -239,7 +239,7 @@ jobs:
       - name: Verify Cosign signature (keyless)
         env:
           COSIGN_EXPERIMENTAL: "1"
-        run: cosign verify ${{ needs.container-build.outputs.image }}
+        run: cosign verify ${{ needs.container-build.outputs.image }}@${{ needs.container-build.outputs.digest }}
       - name: Fail if attestation missing
         run: |
           # Extra guard: ensure IMAGE_NAME owner is lowercase (docker requires lowercase repository names)
@@ -250,4 +250,4 @@ jobs:
             exit 1
           fi
 
-          cosign verify-attestation --type cyclonedx --certificate-identity-regexp ".*" --certificate-oidc-issuer https://token.actions.githubusercontent.com $IMAGE_NAME:${{ github.sha }}
+          cosign verify-attestation --type cyclonedx --certificate-identity-regexp ".*" --certificate-oidc-issuer https://token.actions.githubusercontent.com $IMAGE_NAME@${{ needs.container-build.outputs.digest }}
