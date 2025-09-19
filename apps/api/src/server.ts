@@ -2,7 +2,7 @@ import Fastify, { type FastifyInstance } from 'fastify';
 import fastifyHelmet from '@fastify/helmet';
 import fastifyRateLimit from '@fastify/rate-limit';
 import fastifySensible from '@fastify/sensible';
-import { ZodTypeProvider } from 'fastify-type-provider-zod';
+import { ZodTypeProvider, validatorCompiler, serializerCompiler } from 'fastify-type-provider-zod';
 import { env } from './config/env.js';
 import { problemErrorHandler } from './lib/problem.js';
 import { verifyPostgres, postgresPool } from './lib/postgres.js';
@@ -21,6 +21,10 @@ export function buildServer(): FastifyInstance {
       transport: env.NODE_ENV === 'development' ? { target: 'pino-pretty' } : undefined
     }
   }).withTypeProvider<ZodTypeProvider>();
+
+  // Enable Zod-based validation and serialization
+  app.setValidatorCompiler(validatorCompiler);
+  app.setSerializerCompiler(serializerCompiler);
 
   void app.register(fastifyHelmet, {
     contentSecurityPolicy: false
