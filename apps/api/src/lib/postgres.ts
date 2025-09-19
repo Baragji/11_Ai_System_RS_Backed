@@ -28,3 +28,7 @@ export async function verifyPostgres(): Promise<void> {
     client.release();
   }
 }
+
+export function getPool(): Pool {
+  return postgresPool;
+}

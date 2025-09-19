@@ -2,6 +2,7 @@ import { Kafka, logLevel } from 'kafkajs';
 import { env } from '../config/env.js';
 
 const brokers = env.KAFKA_BROKERS.split(',').map((broker: string) => broker.trim());
+const isTest = env.NODE_ENV === 'test';
 
 export const kafka = new Kafka({
   clientId: 'platform-api',
@@ -18,6 +19,10 @@ export const kafka = new Kafka({
 });
 
 export async function verifyKafka(): Promise<void> {
+  if (isTest) {
+    // Skip external Kafka connectivity checks during tests
+    return;
+  }
   const admin = kafka.admin();
   await admin.connect();
   try {

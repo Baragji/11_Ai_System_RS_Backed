@@ -28,3 +28,23 @@ export function problemErrorHandler(error: FastifyError, request: FastifyRequest
     .type('application/problem+json')
     .send(body);
 }
+
+export function withErrorHandling<
+  Request extends FastifyRequest = FastifyRequest,
+  Reply extends FastifyReply = FastifyReply,
+  Result = unknown
+>(handler: (request: Request, reply: Reply) => Promise<Result>): (request: Request, reply: Reply) => Promise<Result> {
+  return async (request, reply) => {
+    try {
+      return await handler(request, reply);
+    } catch (error) {
+      request.log.error({ err: error }, 'Route handler threw an error');
+      if (error instanceof Error) {
+        throw error;
+      }
+      const wrapped = new Error('Unknown error occurred');
+      (wrapped as Partial<FastifyError>).statusCode = 500;
+      throw wrapped;
+    }
+  };
+}

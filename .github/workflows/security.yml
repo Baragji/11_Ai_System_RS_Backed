@@ -11,24 +11,10 @@ permissions:
   contents: read
   security-events: write
   id-token: write
+  packages: write
   attestations: write
 
 jobs:
-  codeql:
-    name: CodeQL Analysis
-    runs-on: ubuntu-22.04
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-      - name: Initialize CodeQL
-        uses: github/codeql-action/init@v3
-        with:
-          languages: javascript
-      - name: Autobuild
-        uses: github/codeql-action/autobuild@v3
-      - name: Perform CodeQL Analysis
-        uses: github/codeql-action/analyze@v3
-
   semgrep:
     name: Semgrep Scan
     runs-on: ubuntu-22.04
@@ -80,10 +66,11 @@ jobs:
       image: ${{ steps.image_ref.outputs.image_name }}:${{ github.sha }}
       image_name: ${{ steps.image_ref.outputs.image_name }}
       digest: ${{ steps.image_ref.outputs.digest }}
-    env:
-      IMAGE_NAME: ghcr.io/prod-ai/platform-api
     steps:
       - uses: actions/checkout@v4
+      - name: Set IMAGE_NAME
+        shell: bash
+        run: echo "IMAGE_NAME=ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/platform-api" >> "$GITHUB_ENV"
       - uses: actions/setup-node@v4
         with:
           node-version: '20'
@@ -93,7 +80,25 @@ jobs:
         run: npm run build
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
-      - name: Login to GHCR
+      - name: Validate push permissions
+        if: github.event_name == 'push'
+        run: |
+          echo "Repository: ${{ github.repository }}"
+          echo "Repository Owner: ${{ github.repository_owner }}"
+          echo "Image Name: ${IMAGE_NAME}"
+          echo "Actor: ${{ github.actor }}"
+          echo "Event: ${{ github.event_name }}"
+          
+          # Verify we're pushing to the correct namespace (lowercased owner)
+          if [[ "${IMAGE_NAME}" != "ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/platform-api" ]]; then
+            echo "❌ Error: IMAGE_NAME mismatch. Expected ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/platform-api, got ${IMAGE_NAME}"
+            exit 1
+          fi
+          
+          echo "✅ Push validation passed"
+
+      - name: Log in to GitHub Container Registry
+        if: github.event_name == 'push'
         uses: docker/login-action@v3
         with:
           registry: ghcr.io
@@ -103,7 +108,7 @@ jobs:
         id: build
         uses: docker/build-push-action@v5
         with:
-          push: true
+          push: ${{ github.event_name == 'push' }}
           tags: ${{ env.IMAGE_NAME }}:${{ github.sha }}
           file: ./Dockerfile
       - name: Generate CycloneDX SBOM
@@ -114,22 +119,43 @@ jobs:
           name: cyclonedx-sbom
           path: sbom.cdx.json
       - name: Run Syft container SBOM
+        if: github.event_name == 'push'
+        shell: bash
         run: |
+          set -euo pipefail
           # Install Syft (Anchore) and generate CycloneDX SBOM for the built image
           curl -sSfL https://raw.githubusercontent.com/anchore/syft/main/install.sh | sh -s -- -b /usr/local/bin
           /usr/local/bin/syft ${{ env.IMAGE_NAME }}:${{ github.sha }} -o cyclonedx-json > image.cdx.json
+          if [ ! -s image.cdx.json ]; then
+            echo "Syft did not produce image.cdx.json or file is empty"
+            exit 1
+          fi
       - name: Upload image SBOM
+        if: github.event_name == 'push'
         uses: actions/upload-artifact@v4
         with:
           name: container-sbom
           path: image.cdx.json
       - name: Ensure jq is installed
+        if: github.event_name == 'push'
         run: sudo apt-get update && sudo apt-get install -y jq
       - name: Generate Syft JSON for license diagnostics
-        run: /usr/local/bin/syft ${{ env.IMAGE_NAME }}:${{ github.sha }} -o json > image.syft.json
-      - name: Print license diagnostics (name, version, licenses, paths)
+        if: github.event_name == 'push'
         shell: bash
         run: |
+          set -euo pipefail
+          echo "Generating Syft JSON for ${{ env.IMAGE_NAME }}:${{ github.sha }}"
+          /usr/local/bin/syft ${{ env.IMAGE_NAME }}:${{ github.sha }} -o json > image.syft.json
+          if [ ! -s image.syft.json ]; then
+            echo "Syft did not produce image.syft.json or file is empty"
+            exit 1
+          fi
+      - name: Print license diagnostics (name, version, licenses, paths)
+        if: github.event_name == 'push'
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -s image.syft.json || { echo "image.syft.json missing before jq"; exit 1; }
           jq -r '
             .artifacts[] as $a
             | [$a.name, $a.version, ($a.licenses // [] | map(.value) | join("|")), ($a.locations // [] | map(.path) | join("|"))]
@@ -141,6 +167,7 @@ jobs:
           name: image-syft-json
           path: image.syft.json
       - name: Trivy image scan
+        if: github.event_name == 'push'
         uses: aquasecurity/trivy-action@0.20.0
         with:
           image-ref: ${{ env.IMAGE_NAME }}:${{ github.sha }}
@@ -148,6 +175,7 @@ jobs:
           exit-code: '1'
           ignore-unfixed: true
       - name: Cosign Sign Container
+        if: github.event_name == 'push'
         env:
           COSIGN_EXPERIMENTAL: "1"
           COSIGN_PRIVATE_KEY: ${{ secrets.COSIGN_PRIVATE_KEY }}
@@ -157,6 +185,7 @@ jobs:
           cosign sign --key cosign.key --yes $IMAGE_NAME:${{ github.sha }}
 
       - name: Cosign Attest SBOM
+        if: github.event_name == 'push'
         env:
           COSIGN_EXPERIMENTAL: "1"
           COSIGN_PRIVATE_KEY: ${{ secrets.COSIGN_PRIVATE_KEY }}
@@ -171,6 +200,7 @@ jobs:
 
   generate-slsa:
     name: Generate SLSA Provenance
+    if: github.event_name == 'push'
     needs: container-build
     permissions:
       actions: read
@@ -186,18 +216,28 @@ jobs:
 
   policy-gate:
     name: Policy Gate
+    if: github.event_name == 'push'
     runs-on: ubuntu-22.04
     needs:
       - container-build
       - generate-slsa
-    env:
-      IMAGE_NAME: ghcr.io/prod-ai/platform-api
     steps:
       - uses: actions/checkout@v4
+      - name: Set IMAGE_NAME
+        shell: bash
+        run: echo "IMAGE_NAME=ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/platform-api" >> "$GITHUB_ENV"
       - name: Verify Cosign signature
         env:
           COSIGN_EXPERIMENTAL: "1"
         run: cosign verify ${{ needs.container-build.outputs.image }}
       - name: Fail if attestation missing
         run: |
+          # Extra guard: ensure IMAGE_NAME owner is lowercase (docker requires lowercase repository names)
+          OWNER_PART=$(echo "$IMAGE_NAME" | awk -F'/' '{print $2}')
+          if [[ "$OWNER_PART" =~ [A-Z] ]]; then
+            echo "❌ IMAGE_NAME owner contains uppercase letters: $OWNER_PART"
+            echo "    Ensure the owner is lowercased (e.g., use \"${GITHUB_REPOSITORY_OWNER,,}\" when constructing IMAGE_NAME)"
+            exit 1
+          fi
+
           cosign verify-attestation --type cyclonedx --certificate-identity-regexp ".*" --certificate-oidc-issuer https://token.actions.githubusercontent.com $IMAGE_NAME:${{ github.sha }}

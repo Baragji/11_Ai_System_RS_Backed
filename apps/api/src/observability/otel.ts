@@ -3,6 +3,7 @@ import { NodeSDK } from '@opentelemetry/sdk-node';
 import { OTLPTraceExporter } from '@opentelemetry/exporter-trace-otlp-grpc';
 import { OTLPMetricExporter } from '@opentelemetry/exporter-metrics-otlp-grpc';
 import { PeriodicExportingMetricReader } from '@opentelemetry/sdk-metrics';
+import { pino } from 'pino';
 import { env } from '../config/env.js';
 import { getNodeAutoInstrumentations } from '@opentelemetry/auto-instrumentations-node';
 import { Resource } from '@opentelemetry/resources';
@@ -46,6 +47,12 @@ export const sdk = new NodeSDK({
   metricReader,
   instrumentations: [getNodeAutoInstrumentations()]
 } as unknown as ConstructorParameters<typeof NodeSDK>[0]);
+
+export const logger = pino({
+  name: env.OTEL_SERVICE_NAME,
+  level: env.NODE_ENV === 'production' ? 'info' : 'debug',
+  transport: env.NODE_ENV === 'development' ? { target: 'pino-pretty' } : undefined
+});
 
 export async function startTelemetry(): Promise<void> {
   await sdk.start();
