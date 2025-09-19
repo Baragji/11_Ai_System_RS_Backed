@@ -206,6 +206,9 @@ jobs:
     name: Generate SLSA Provenance
     if: github.event_name == 'push'
     needs: container-build
+    env:
+      SUCCESS: true
+      CONTINUE: true
     permissions:
       actions: read
       id-token: write
