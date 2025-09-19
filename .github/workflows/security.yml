@@ -11,6 +11,7 @@ permissions:
   contents: read
   security-events: write
   id-token: write
+  packages: write
   attestations: write
 
 jobs:
@@ -66,7 +67,7 @@ jobs:
       image_name: ${{ steps.image_ref.outputs.image_name }}
       digest: ${{ steps.image_ref.outputs.digest }}
     env:
-      IMAGE_NAME: ghcr.io/prod-ai/platform-api
+      IMAGE_NAME: ghcr.io/${{ github.repository_owner }}/platform-api
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -78,7 +79,25 @@ jobs:
         run: npm run build
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
-      - name: Login to GHCR
+      - name: Validate push permissions
+        if: github.event_name == 'push'
+        run: |
+          echo "Repository: ${{ github.repository }}"
+          echo "Repository Owner: ${{ github.repository_owner }}"
+          echo "Image Name: ${IMAGE_NAME}"
+          echo "Actor: ${{ github.actor }}"
+          echo "Event: ${{ github.event_name }}"
+          
+          # Verify we're pushing to the correct namespace
+          if [[ "${IMAGE_NAME}" != "ghcr.io/${{ github.repository_owner }}/platform-api" ]]; then
+            echo "❌ Error: IMAGE_NAME mismatch. Expected ghcr.io/${{ github.repository_owner }}/platform-api, got ${IMAGE_NAME}"
+            exit 1
+          fi
+          
+          echo "✅ Push validation passed"
+
+      - name: Log in to GitHub Container Registry
+        if: github.event_name == 'push'
         uses: docker/login-action@v3
         with:
           registry: ghcr.io
@@ -88,7 +107,7 @@ jobs:
         id: build
         uses: docker/build-push-action@v5
         with:
-          push: true
+          push: ${{ github.event_name == 'push' }}
           tags: ${{ env.IMAGE_NAME }}:${{ github.sha }}
           file: ./Dockerfile
       - name: Generate CycloneDX SBOM
@@ -99,6 +118,7 @@ jobs:
           name: cyclonedx-sbom
           path: sbom.cdx.json
       - name: Run Syft container SBOM
+        if: github.event_name == 'push'
         run: |
           # Install Syft (Anchore) and generate CycloneDX SBOM for the built image
           curl -sSfL https://raw.githubusercontent.com/anchore/syft/main/install.sh | sh -s -- -b /usr/local/bin
@@ -111,6 +131,7 @@ jobs:
       - name: Ensure jq is installed
         run: sudo apt-get update && sudo apt-get install -y jq
       - name: Generate Syft JSON for license diagnostics
+        if: github.event_name == 'push'
         run: /usr/local/bin/syft ${{ env.IMAGE_NAME }}:${{ github.sha }} -o json > image.syft.json
       - name: Print license diagnostics (name, version, licenses, paths)
         shell: bash
@@ -126,6 +147,7 @@ jobs:
           name: image-syft-json
           path: image.syft.json
       - name: Trivy image scan
+        if: github.event_name == 'push'
         uses: aquasecurity/trivy-action@0.20.0
         with:
           image-ref: ${{ env.IMAGE_NAME }}:${{ github.sha }}
@@ -133,6 +155,7 @@ jobs:
           exit-code: '1'
           ignore-unfixed: true
       - name: Cosign Sign Container
+        if: github.event_name == 'push'
         env:
           COSIGN_EXPERIMENTAL: "1"
           COSIGN_PRIVATE_KEY: ${{ secrets.COSIGN_PRIVATE_KEY }}
@@ -142,6 +165,7 @@ jobs:
           cosign sign --key cosign.key --yes $IMAGE_NAME:${{ github.sha }}
 
       - name: Cosign Attest SBOM
+        if: github.event_name == 'push'
         env:
           COSIGN_EXPERIMENTAL: "1"
           COSIGN_PRIVATE_KEY: ${{ secrets.COSIGN_PRIVATE_KEY }}
@@ -156,6 +180,7 @@ jobs:
 
   generate-slsa:
     name: Generate SLSA Provenance
+    if: github.event_name == 'push'
     needs: container-build
     permissions:
       actions: read
@@ -171,12 +196,13 @@ jobs:
 
   policy-gate:
     name: Policy Gate
+    if: github.event_name == 'push'
     runs-on: ubuntu-22.04
     needs:
       - container-build
       - generate-slsa
     env:
-      IMAGE_NAME: ghcr.io/prod-ai/platform-api
+      IMAGE_NAME: ghcr.io/${{ github.repository_owner }}/platform-api
     steps:
       - uses: actions/checkout@v4
       - name: Verify Cosign signature
