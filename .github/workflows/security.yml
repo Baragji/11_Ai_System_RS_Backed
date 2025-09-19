@@ -150,6 +150,7 @@ jobs:
             echo "Syft did not produce image.syft.json or file is empty"
             exit 1
           fi
+
       - name: Print license diagnostics (name, version, licenses, paths)
         if: github.event_name == 'push'
         shell: bash
@@ -226,6 +227,10 @@ jobs:
       - name: Set IMAGE_NAME
         shell: bash
         run: echo "IMAGE_NAME=ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/platform-api" >> "$GITHUB_ENV"
+      - name: Install Cosign
+        run: |
+          sudo wget -O /usr/local/bin/cosign https://github.com/sigstore/cosign/releases/latest/download/cosign-linux-amd64
+          sudo chmod +x /usr/local/bin/cosign
       - name: Verify Cosign signature
         env:
           COSIGN_EXPERIMENTAL: "1"
