@@ -18,10 +18,12 @@ The workflow pushes container images to GitHub Container Registry (GHCR) at:
 ghcr.io/{repository_owner}/platform-api
 ```
 
-For this repository (Baragji/11_Ai_System_RS_Backed), images will be pushed to:
+For this repository (baragji/11_Ai_System_RS_Backed), images will be pushed to:
 ```
 ghcr.io/baragji/platform-api
 ```
+
+Note: Docker/OCI repository names must be lowercase. Always use `toLower(github.repository_owner)` in GitHub Actions or write the owner literally in lowercase (for example `baragji`).
 
 ## Required Secrets
 

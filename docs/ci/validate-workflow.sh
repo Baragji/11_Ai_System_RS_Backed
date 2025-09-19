@@ -35,12 +35,12 @@ else
   exit 1
 fi
 
-# Check image name pattern
+# Check image name pattern (allow lowercased literal or use of toLower() expression)
 echo "🏷️ Checking image name configuration..."
-if grep -q "ghcr.io/\${{ github.repository_owner }}/platform-api" "$WORKFLOW_FILE"; then
+if grep -q "ghcr.io/\${{ github.repository_owner }}/platform-api" "$WORKFLOW_FILE" || grep -q "ghcr.io/\${{ toLower(github.repository_owner) }}/platform-api" "$WORKFLOW_FILE"; then
   echo "✅ Correct image name pattern found"
 else
-  echo "❌ Incorrect image name pattern"
+  echo "❌ Incorrect image name pattern. Expected either ghcr.io/\${{ toLower(github.repository_owner) }}/platform-api or a lowercase literal ghcr.io/owner/platform-api"
   exit 1
 fi
 
