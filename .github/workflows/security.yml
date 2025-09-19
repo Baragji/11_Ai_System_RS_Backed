@@ -120,10 +120,16 @@ jobs:
           path: sbom.cdx.json
       - name: Run Syft container SBOM
         if: github.event_name == 'push'
+        shell: bash
         run: |
+          set -euo pipefail
           # Install Syft (Anchore) and generate CycloneDX SBOM for the built image
           curl -sSfL https://raw.githubusercontent.com/anchore/syft/main/install.sh | sh -s -- -b /usr/local/bin
           /usr/local/bin/syft ${{ env.IMAGE_NAME }}:${{ github.sha }} -o cyclonedx-json > image.cdx.json
+          if [ ! -s image.cdx.json ]; then
+            echo "Syft did not produce image.cdx.json or file is empty"
+            exit 1
+          fi
       - name: Upload image SBOM
         if: github.event_name == 'push'
         uses: actions/upload-artifact@v4
@@ -131,13 +137,25 @@ jobs:
           name: container-sbom
           path: image.cdx.json
       - name: Ensure jq is installed
+        if: github.event_name == 'push'
         run: sudo apt-get update && sudo apt-get install -y jq
       - name: Generate Syft JSON for license diagnostics
         if: github.event_name == 'push'
-        run: /usr/local/bin/syft ${{ env.IMAGE_NAME }}:${{ github.sha }} -o json > image.syft.json
-      - name: Print license diagnostics (name, version, licenses, paths)
         shell: bash
         run: |
+          set -euo pipefail
+          echo "Generating Syft JSON for ${{ env.IMAGE_NAME }}:${{ github.sha }}"
+          /usr/local/bin/syft ${{ env.IMAGE_NAME }}:${{ github.sha }} -o json > image.syft.json
+          if [ ! -s image.syft.json ]; then
+            echo "Syft did not produce image.syft.json or file is empty"
+            exit 1
+          fi
+      - name: Print license diagnostics (name, version, licenses, paths)
+        if: github.event_name == 'push'
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -s image.syft.json || { echo "image.syft.json missing before jq"; exit 1; }
           jq -r '
             .artifacts[] as $a
             | [$a.name, $a.version, ($a.licenses // [] | map(.value) | join("|")), ($a.locations // [] | map(.path) | join("|"))]
