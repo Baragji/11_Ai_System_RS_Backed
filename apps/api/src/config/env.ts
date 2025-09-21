@@ -24,7 +24,8 @@ const envSchema = z.object({
   OIDC_ISSUER: z.string(),
   OIDC_AUDIENCE: z.string(),
   OIDC_JWKS_URI: z.string(),
-  SERVICE_VERSION: z.string().default('1.0.0')
+  SERVICE_VERSION: z.string().default('1.0.0'),
+  ENABLE_DEPENDENCY_HEALTHCHECKS: z.enum(['true', 'false']).default('true')
 });
 
 const parsed = envSchema.safeParse(process.env);

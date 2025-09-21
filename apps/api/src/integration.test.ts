@@ -1,71 +1,146 @@
-import { test, describe } from 'node:test';
-import assert from 'node:assert';
-import { buildServer } from './server.js';
-import type { FastifyInstance } from 'fastify';
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import { buildServer, type BuildServerOptions } from './server.js';
+import type { AuthContext } from './lib/oidc.js';
+import type { TaskPayload } from './routes/tasks.js';
 
-describe('Integration Tests - Phase 0 & Phase 1', () => {
-  test('should create server instance with all routes', async () => {
-    // Test Phase 0 foundation: server builds without errors
-    let app: FastifyInstance | undefined;
-    assert.doesNotThrow(() => {
-      app = buildServer();
-    }, 'Server should build without throwing errors');
+const sampleTask: TaskPayload = {
+  taskId: '123e4567-e89b-12d3-a456-426614174000',
+  agent: 'planner',
+  payload: { example: 'payload' },
+  priority: 5
+};
 
-    assert.ok(app, 'Server instance should be created');
-    
-    // Test that server has required decorations and hooks
-    assert.ok(app.hasDecorator, 'Server should have decorator support');
+const authorizedContext: AuthContext = {
+  subject: 'tester',
+  scope: 'tasks:write',
+  claims: { sub: 'tester' }
+};
+
+function createServer(options: Partial<BuildServerOptions> = {}) {
+  const mergedOptions: BuildServerOptions = {
+    enqueueTask: async () => undefined,
+    enableDependencyHealthChecks: false,
+    verifyAccessToken: async () => authorizedContext,
+    skipResourceShutdown: true,
+    ...options
+  };
+  const app = buildServer(mergedOptions);
+  return app;
+}
+
+test('returns RFC 9457 problem when bearer token is missing', async (t) => {
+  const app = createServer();
+  t.after(async () => {
+    await app.close();
   });
 
-  test('should validate workflow schema structure (Phase 1)', async () => {
-    // Test Phase 1: Workflow request validation
-    const validWorkflowPayload = {
-      workflowType: 'test-workflow',
-      payload: { test: 'data' },
-      metadata: { requestId: '123' }
-    };
-
-    // Test that the workflow payload structure is valid
-    assert.ok(validWorkflowPayload.workflowType, 'Workflow type should be required');
-    assert.ok(validWorkflowPayload.payload, 'Payload should be required');
-    assert.equal(typeof validWorkflowPayload.payload, 'object', 'Payload should be an object');
-    assert.equal(typeof validWorkflowPayload.metadata, 'object', 'Metadata should be an object');
+  const response = await app.inject({
+    method: 'POST',
+    url: '/tasks',
+    payload: sampleTask
   });
 
-  test('should validate task schema structure (Phase 0)', () => {
-    // Test Phase 0: Task request validation
-    const validTaskPayload = {
-      taskId: '123e4567-e89b-12d3-a456-426614174000',
-      agent: 'planner',
-      payload: { test: 'data' },
-      priority: 5
-    };
+  assert.equal(response.statusCode, 401);
+  const body = response.json();
+  assert.equal(body.status, 401);
+  assert.equal(body.title, 'Missing bearer token');
+  assert.equal(body.type, 'about:blank');
+});
 
-    // Test that the task payload structure is valid
-    assert.ok(validTaskPayload.taskId, 'Task ID should be required');
-    assert.ok(validTaskPayload.agent, 'Agent should be required');
-    assert.ok(['planner', 'coder', 'critic'].includes(validTaskPayload.agent), 'Agent should be valid enum');
-    assert.equal(typeof validTaskPayload.payload, 'object', 'Payload should be an object');
-    assert.equal(typeof validTaskPayload.priority, 'number', 'Priority should be a number');
+test('returns RFC 9457 problem when bearer token verification fails', async (t) => {
+  let verifyAttempts = 0;
+  const app = createServer({
+    verifyAccessToken: async () => {
+      verifyAttempts += 1;
+      throw new Error('invalid token');
+    }
+  });
+  t.after(async () => {
+    await app.close();
   });
 
-  test('should validate database schemas exist (Phase 0)', async () => {
-    const fs = await import('node:fs');
-    const path = await import('node:path');
-    
-    // Test that database migrations exist
-    const migrationsPath = path.resolve('migrations');
-    assert.ok(fs.existsSync(path.join(migrationsPath, '001_init.sql')), 'Initial migration should exist');
-    assert.ok(fs.existsSync(path.join(migrationsPath, '002_event_sourcing.sql')), 'Event sourcing migration should exist');
+  const response = await app.inject({
+    method: 'POST',
+    url: '/tasks',
+    payload: sampleTask,
+    headers: {
+      authorization: 'Bearer invalid'
+    }
   });
 
-  test('should validate Phase 1 core modules exist', async () => {
-    const fs = await import('node:fs');
-    const path = await import('node:path');
-    
-    // Test that Phase 1 implementations exist
-    const srcPath = path.resolve('src/lib');
-    assert.ok(fs.existsSync(path.join(srcPath, 'event-store.ts')), 'Event Store should exist');
-    assert.ok(fs.existsSync(path.join(srcPath, 'saga-orchestrator.ts')), 'Saga Orchestrator should exist');
+  assert.equal(verifyAttempts, 1);
+  assert.equal(response.statusCode, 401);
+  const body = response.json();
+  assert.equal(body.status, 401);
+  assert.equal(body.title, 'Invalid bearer token');
+  assert.equal(body.type, 'about:blank');
+});
+
+test('readiness succeeds without invoking dependency checks when disabled', async (t) => {
+  let dependencyChecks = 0;
+  const app = createServer({
+    dependencyHealthCheck: async () => {
+      dependencyChecks += 1;
+    },
+    enableDependencyHealthChecks: false
   });
+  t.after(async () => {
+    await app.close();
+  });
+
+  const response = await app.inject({
+    method: 'GET',
+    url: '/health/ready'
+  });
+
+  assert.equal(response.statusCode, 200);
+  const body = response.json();
+  assert.equal(body.status, 'ok');
+  assert.equal(dependencyChecks, 0);
+});
+
+test('readiness executes dependency checks when enabled', async (t) => {
+  let dependencyChecks = 0;
+  const app = createServer({
+    dependencyHealthCheck: async () => {
+      dependencyChecks += 1;
+    },
+    enableDependencyHealthChecks: true
+  });
+  t.after(async () => {
+    await app.close();
+  });
+
+  const response = await app.inject({
+    method: 'GET',
+    url: '/health/ready'
+  });
+
+  assert.equal(response.statusCode, 200);
+  assert.equal(dependencyChecks, 1);
+});
+
+test('authorized task submission enqueues payload', async (t) => {
+  const enqueued: TaskPayload[] = [];
+  const app = createServer({
+    enqueueTask: async (payload) => {
+      enqueued.push(payload);
+    }
+  });
+  t.after(async () => {
+    await app.close();
+  });
+
+  const response = await app.inject({
+    method: 'POST',
+    url: '/tasks',
+    payload: sampleTask,
+    headers: {
+      authorization: 'Bearer valid'
+    }
+  });
+
+  assert.equal(response.statusCode, 202);
+  assert.deepEqual(enqueued, [sampleTask]);
 });

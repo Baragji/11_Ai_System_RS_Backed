@@ -1,4 +1,4 @@
-import Fastify, { type FastifyInstance } from 'fastify';
+import Fastify, { type FastifyInstance, type FastifyError } from 'fastify';
 import fastifyHelmet from '@fastify/helmet';
 import fastifyRateLimit from '@fastify/rate-limit';
 import fastifySensible from '@fastify/sensible';
@@ -8,12 +8,25 @@ import { problemErrorHandler } from './lib/problem.js';
 import { verifyPostgres, postgresPool } from './lib/postgres.js';
 import { redisClient, verifyRedis } from './lib/redis.js';
 import { kafka, verifyKafka } from './lib/kafka.js';
-import { verifyAccessToken } from './lib/oidc.js';
+import { verifyAccessToken, type AuthContext } from './lib/oidc.js';
 import { registerHealthRoutes } from './routes/health.js';
 import { registerTaskRoutes, type TaskPayload } from './routes/tasks.js';
 import workflowRoutes from './routes/workflow.js';
 
-export function buildServer(): FastifyInstance {
+export interface BuildServerOptions {
+  verifyAccessToken?: (token: string) => Promise<AuthContext>;
+  dependencyHealthCheck?: () => Promise<void>;
+  enableDependencyHealthChecks?: boolean;
+  enqueueTask?: (payload: TaskPayload) => Promise<void>;
+  skipResourceShutdown?: boolean;
+}
+
+function hasStatusCode(error: unknown): error is FastifyError {
+  return typeof error === 'object' && error !== null && 'statusCode' in error &&
+    typeof (error as Partial<FastifyError>).statusCode === 'number';
+}
+
+export function buildServer(options: BuildServerOptions = {}): FastifyInstance {
   const app = Fastify({
     trustProxy: true,
     logger: {
@@ -37,50 +50,75 @@ export function buildServer(): FastifyInstance {
 
   app.decorateRequest('auth', null);
 
-  app.addHook('onRequest', async (request, reply) => {
-    if (request.routerPath?.startsWith('/health')) {
+  const verifyToken = options.verifyAccessToken ?? verifyAccessToken;
+  const dependencyHealthCheck = options.dependencyHealthCheck ?? (async () => {
+    await Promise.all([verifyPostgres(), verifyRedis(), verifyKafka()]);
+  });
+  const shouldCheckDependencies = options.enableDependencyHealthChecks ?? (env.ENABLE_DEPENDENCY_HEALTHCHECKS === 'true');
+
+  app.addHook('onRequest', async (request) => {
+    const routeUrl = request.routeOptions?.url;
+    if (routeUrl?.startsWith('/health')) {
       request.auth = null;
       return;
     }
 
     const authHeader = request.headers.authorization;
     if (!authHeader?.startsWith('Bearer ')) {
-      reply.code(401);
-      throw new Error('Missing bearer token');
+      throw app.httpErrors.unauthorized('Missing bearer token');
     }
     const token = authHeader.slice('Bearer '.length);
-    request.auth = await verifyAccessToken(token);
+    try {
+      request.auth = await verifyToken(token);
+    } catch (error) {
+      request.auth = null;
+      if (hasStatusCode(error)) {
+        throw error;
+      }
+      request.log.warn({ err: error }, 'Failed to verify access token');
+      throw app.httpErrors.unauthorized('Invalid bearer token');
+    }
   });
 
   app.setErrorHandler(problemErrorHandler);
 
   registerHealthRoutes(app, {
     async check() {
-      await Promise.all([verifyPostgres(), verifyRedis(), verifyKafka()]);
+      if (!shouldCheckDependencies) {
+        return;
+      }
+      await dependencyHealthCheck();
     }
   });
-  const producer = kafka.producer();
-  let producerReady = false;
-  let producerConnectPromise: Promise<void> | null = null;
 
-  async function ensureProducer(): Promise<void> {
-    if (producerReady) {
-      return;
-    }
-    if (!producerConnectPromise) {
-      producerConnectPromise = producer.connect()
-        .then(() => {
-          producerReady = true;
-        })
-        .finally(() => {
-          producerConnectPromise = null;
-        });
-    }
-    await producerConnectPromise;
-  }
+  let closeTaskResources: (() => Promise<void>) | null = null;
+  let enqueueTask: (payload: TaskPayload) => Promise<void>;
+  const skipResourceShutdown = options.skipResourceShutdown ?? false;
 
-  registerTaskRoutes(app, {
-    async enqueueTask(payload: TaskPayload) {
+  if (options.enqueueTask) {
+    enqueueTask = options.enqueueTask;
+  } else {
+    const producer = kafka.producer();
+    let producerReady = false;
+    let producerConnectPromise: Promise<void> | null = null;
+
+    const ensureProducer = async (): Promise<void> => {
+      if (producerReady) {
+        return;
+      }
+      if (!producerConnectPromise) {
+        producerConnectPromise = producer.connect()
+          .then(() => {
+            producerReady = true;
+          })
+          .finally(() => {
+            producerConnectPromise = null;
+          });
+      }
+      await producerConnectPromise;
+    };
+
+    enqueueTask = async (payload: TaskPayload) => {
       await ensureProducer();
       await producer.send({
         topic: 'agent.tasks',
@@ -89,20 +127,35 @@ export function buildServer(): FastifyInstance {
           value: JSON.stringify(payload)
         }]
       });
+    };
+
+    closeTaskResources = async () => {
+      await producer.disconnect().then(() => {
+        producerReady = false;
+      }).catch(() => undefined);
+    };
+  }
+
+  registerTaskRoutes(app, {
+    async enqueueTask(payload: TaskPayload) {
+      await enqueueTask(payload);
     }
   });
 
   void app.register(workflowRoutes);
 
   app.addHook('onClose', async () => {
-    await Promise.all([
-      postgresPool.end(),
-      redisClient.quit(),
-      producer.disconnect().then(() => {
-        producerReady = false;
-      }).catch(() => undefined)
-    ]);
+    const shutdownTasks: Array<Promise<unknown>> = [];
+    if (!skipResourceShutdown) {
+      shutdownTasks.push(postgresPool.end());
+      shutdownTasks.push(redisClient.quit().catch(() => undefined));
+    }
+    if (closeTaskResources) {
+      shutdownTasks.push(closeTaskResources().catch(() => undefined));
+    }
+    await Promise.all(shutdownTasks);
   });
 
   return app as FastifyInstance;
 }
+
