@@ -45,7 +45,7 @@ jobs:
       - name: Run npm audit
         run: npm audit --audit-level=high
       - name: Run Trivy filesystem scan
-        uses: aquasecurity/trivy-action@0.20.0
+        uses: aquasecurity/trivy-action@0.35.0
         with:
           scan-type: fs
           severity: 'HIGH,CRITICAL'
@@ -169,7 +169,7 @@ jobs:
           path: image.syft.json
       - name: Trivy image scan
         if: github.event_name == 'push'
-        uses: aquasecurity/trivy-action@0.20.0
+        uses: aquasecurity/trivy-action@0.35.0
         with:
           image-ref: ${{ env.IMAGE_NAME }}:${{ github.sha }}
           severity: 'HIGH,CRITICAL'
